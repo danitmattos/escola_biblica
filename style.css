@@ -106,7 +106,7 @@ ol {
   --color-bg-card:      var(--color-white);
   --color-text:         var(--color-gray-800);
   --color-text-muted:   var(--color-gray-500);
-  --color-border:       var(--color-gray-200);
+  --color-border:       var(--color-gray-300);
 
   /* --- Tipografia --- */
   --font-base:    'Inter', 'Segoe UI', Arial, sans-serif;
@@ -142,7 +142,7 @@ ol {
   --radius-full: 9999px;
 
   /* --- Sombras --- */
-  --shadow-sm: 0 1px 2px rgba(0,0,0,.05);
+  --shadow-sm: 0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.05);
   --shadow-md: 0 4px 6px rgba(0,0,0,.07), 0 1px 3px rgba(0,0,0,.06);
   --shadow-lg: 0 10px 15px rgba(0,0,0,.07), 0 4px 6px rgba(0,0,0,.05);
   --shadow-xl: 0 20px 25px rgba(0,0,0,.08), 0 10px 10px rgba(0,0,0,.04);

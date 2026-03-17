@@ -7,7 +7,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $senha = $_POST['usuario_senha'];
 
     // Usando prepared statement para maior segurança
-    $stmt = $conexao->prepare("SELECT * FROM tb_usuarios WHERE usuario_email = ? LIMIT 1");
+    $stmt = $conexao->prepare("SELECT * FROM tb_cad_alunos WHERE usuario_email = ? LIMIT 1");
     $stmt->bind_param("s", $usuario_email);
     $stmt->execute();
     $result = $stmt->get_result();
@@ -18,6 +18,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $_SESSION['usuario']       = trim($user['nome'] . ' ' . $user['sobrenome']);
             $_SESSION['usuario_email'] = $usuario_email;
             $_SESSION['usuario_id']    = $user['id'];
+            $_SESSION['usuario_foto']  = $user['foto'] ?? '';
             header('Location: index.php');
             exit();
         } else {

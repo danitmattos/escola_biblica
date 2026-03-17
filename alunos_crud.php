@@ -21,6 +21,14 @@ require_once __DIR__ . '/libs/connection.php';
 mysqli_report(MYSQLI_REPORT_OFF);
 
 $method = $_SERVER['REQUEST_METHOD'];
+// Suporta override de método via ?_method=PUT para formulários multipart/form-data
+if ($method === 'POST' && !empty($_GET['_method'])) {
+    $override = strtoupper($_GET['_method']);
+    if (in_array($override, ['PUT', 'DELETE'], true)) $method = $override;
+}
+
+// Garante que a coluna foto existe na tabela
+ensureFotoColumn($conexao);
 
 // ── Roteamento ─────────────────────────────────────────────
 switch ($method) {
@@ -45,6 +53,68 @@ switch ($method) {
 // GET — listar todos / buscar / obter um por id
 // ══════════════════════════════════════════════════════════
 function handleGet($db) {
+    // Stats para o dashboard
+    if (!empty($_GET['stats'])) {
+        $r = $db->query(
+            "SELECT
+                COUNT(*) AS total,
+                SUM(status = 'ativo') AS ativos,
+                SUM(status = 'pendente') AS pendentes,
+                SUM(DATE_FORMAT(data_matricula,'%Y-%m') = DATE_FORMAT(NOW(),'%Y-%m')) AS novos_mes,
+                SUM(DATE_FORMAT(data_matricula,'%Y-%m') = DATE_FORMAT(NOW() - INTERVAL 1 MONTH,'%Y-%m')) AS novos_mes_anterior,
+                SUM(docente = 'S') AS docentes
+            FROM tb_cad_alunos"
+        );
+        if (!$r) { http_response_code(500); echo json_encode(['ok'=>false,'msg'=>$db->error]); return; }
+        $row = $r->fetch_assoc();
+        echo json_encode(['ok' => true,
+            'total'              => (int)$row['total'],
+            'ativos'             => (int)$row['ativos'],
+            'pendentes'          => (int)$row['pendentes'],
+            'novos_mes'          => (int)$row['novos_mes'],
+            'novos_mes_anterior' => (int)$row['novos_mes_anterior'],
+            'docentes'           => (int)$row['docentes'],
+        ]);
+        return;
+    }
+
+    // Últimas matrículas para o dashboard
+    if (isset($_GET['recentes'])) {
+        $limit = max(1, min(50, (int)($_GET['recentes'] ?: 5)));
+        $stmt  = $db->prepare(
+            'SELECT id, nome, usuario_email, turma, data_matricula, status, foto
+             FROM tb_cad_alunos
+             ORDER BY id DESC
+             LIMIT ?'
+        );
+        if (!$stmt) { http_response_code(500); echo json_encode(['ok'=>false,'msg'=>$db->error]); return; }
+        $stmt->bind_param('i', $limit);
+        $stmt->execute();
+        $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+        $stmt->close();
+        echo json_encode(['ok' => true, 'alunos' => $rows]);
+        return;
+    }
+
+    // Aniversariantes do mês
+    if (isset($_GET['aniversariantes'])) {
+        $mes  = (int) date('m');
+        $stmt = $db->prepare(
+            'SELECT id, nome, data_nascimento, foto, turma
+             FROM tb_cad_alunos
+             WHERE MONTH(data_nascimento) = ?
+               AND data_nascimento IS NOT NULL
+             ORDER BY DAY(data_nascimento)'
+        );
+        if (!$stmt) { http_response_code(500); echo json_encode(['ok'=>false,'msg'=>$db->error]); return; }
+        $stmt->bind_param('i', $mes);
+        $stmt->execute();
+        $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+        $stmt->close();
+        echo json_encode(['ok' => true, 'alunos' => $rows]);
+        return;
+    }
+
     // Obter aluno único
     if (!empty($_GET['id'])) {
         $id = (int) $_GET['id'];
@@ -53,7 +123,7 @@ function handleGet($db) {
                     telefone, usuario_email,
                     cep, logradouro, numero_endereco, complemento_endereco,
                     bairro, cidade, UF,
-                    data_matricula, turma, observacoes, status
+                    data_nascimento, data_matricula, turma, observacoes, status, foto, docente
              FROM tb_cad_alunos WHERE id = ?'
         );
         if (!$stmt) {
@@ -77,12 +147,13 @@ function handleGet($db) {
     }
 
     // Listar / buscar
-    $busca  = trim($_GET['busca']  ?? '');
-    $status = trim($_GET['status'] ?? '');
-    $turma  = trim($_GET['turma']  ?? '');
+    $busca   = trim($_GET['busca']   ?? '');
+    $status  = trim($_GET['status']  ?? '');
+    $turma   = trim($_GET['turma']   ?? '');
+    $docente = trim($_GET['docente'] ?? '');
 
     $sql    = 'SELECT id, nome, sexo, telefone, usuario_email,
-                      turma, data_matricula, status
+                      turma, data_matricula, status, foto, docente
                FROM tb_cad_alunos WHERE 1=1';
     $types  = '';
     $values = [];
@@ -103,6 +174,11 @@ function handleGet($db) {
         $sql     .= ' AND turma = ?';
         $types   .= 's';
         $values[] = $turma;
+    }
+    if ($docente !== '') {
+        $sql     .= ' AND docente = ?';
+        $types   .= 's';
+        $values[] = $docente;
     }
 
     $sql .= ' ORDER BY nome ASC';
@@ -137,8 +213,12 @@ function handleGet($db) {
 // POST — criar aluno
 // ══════════════════════════════════════════════════════════
 function handlePost($db) {
-    $data = json_decode(file_get_contents('php://input'), true);
-    if (!$data) $data = $_POST;
+    // Aceita multipart/form-data (com arquivo) ou application/json
+    if (!empty($_POST)) {
+        $data = $_POST;
+    } else {
+        $data = json_decode(file_get_contents('php://input'), true) ?? [];
+    }
 
     $erros = validar($data, $db, null);
     if ($erros) {
@@ -149,34 +229,54 @@ function handlePost($db) {
 
     $d = sanitize($data);
 
+    // Processa upload de foto (opcional)
+    $fotoPath = '';
+    if (!empty($_FILES['foto']['tmp_name'])) {
+        $up = uploadFoto($_FILES['foto']);
+        if ($up === false) {
+            http_response_code(422);
+            echo json_encode(['ok' => false, 'msg' => 'Foto inválida (use JPG, PNG ou WebP — máx. 2 MB).']);
+            return;
+        }
+        $fotoPath = $up;
+    }
+
     $stmt = $db->prepare(
         'INSERT INTO tb_cad_alunos
             (nome, sexo, cpf, estado_civil, profissao,
              telefone, usuario_email,
              cep, logradouro, numero_endereco, complemento_endereco,
              bairro, cidade, UF,
-             data_matricula, turma, observacoes, status)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
+             data_matricula, turma, observacoes, status, foto, docente)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
     );
     if (!$stmt) {
         http_response_code(500);
         echo json_encode(['ok' => false, 'msg' => 'Erro ao preparar inserção: ' . $db->error]);
         return;
     }
+
     $stmt->bind_param(
-        'ssssssssssssssssss',
+        'ssssssssssssssssssss',
         $d['nome'], $d['sexo'], $d['cpf'], $d['estado_civil'], $d['profissao'],
         $d['telefone'], $d['email'],
         $d['cep'], $d['logradouro'], $d['numero_endereco'], $d['complemento'],
         $d['bairro'], $d['cidade'], $d['UF'],
-        $d['data_matricula'], $d['turma'], $d['observacoes'], $d['status']
+        $d['data_matricula'], $d['turma'], $d['observacoes'], $d['status'],
+        $fotoPath,
+        $d['docente']
     );
 
     if ($stmt->execute()) {
-        $id = $db->insert_id;
+        $newId = $db->insert_id;
         $stmt->close();
+        // data_nascimento em statement separado: evita problema de string vazia em coluna DATE
+        if ($d['data_nascimento'] !== '') {
+            $s2 = $db->prepare('UPDATE tb_cad_alunos SET data_nascimento=? WHERE id=?');
+            if ($s2) { $s2->bind_param('si', $d['data_nascimento'], $newId); $s2->execute(); $s2->close(); }
+        }
         http_response_code(201);
-        echo json_encode(['ok' => true, 'msg' => 'Aluno cadastrado com sucesso.', 'id' => $id]);
+        echo json_encode(['ok' => true, 'msg' => 'Aluno cadastrado com sucesso.', 'id' => $newId]);
     } else {
         $erro = $db->error;
         $stmt->close();
@@ -189,9 +289,11 @@ function handlePost($db) {
 // PUT — editar aluno
 // ══════════════════════════════════════════════════════════
 function handlePut($db) {
-    $data = json_decode(file_get_contents('php://input'), true);
-    if (!$data) {
-        parse_str(file_get_contents('php://input'), $data);
+    // Aceita multipart/form-data (com arquivo) ou application/json
+    if (!empty($_POST)) {
+        $data = $_POST;
+    } else {
+        $data = json_decode(file_get_contents('php://input'), true) ?? [];
     }
 
     $id = (int) ($data['id'] ?? 0);
@@ -210,13 +312,61 @@ function handlePut($db) {
 
     $d = sanitize($data);
 
+    // Processa upload de nova foto (opcional — mantém a existente se não enviada)
+    if (!empty($_FILES['foto']['tmp_name'])) {
+        $up = uploadFoto($_FILES['foto']);
+        if ($up === false) {
+            http_response_code(422);
+            echo json_encode(['ok' => false, 'msg' => 'Foto inválida (use JPG, PNG ou WebP — máx. 2 MB).']);
+            return;
+        }
+        $fotoPath = $up;
+        // Remove foto anterior se existir
+        $stmtF = $db->prepare('SELECT foto FROM tb_cad_alunos WHERE id = ?');
+        if ($stmtF) {
+            $stmtF->bind_param('i', $id);
+            $stmtF->execute();
+            $rowF = $stmtF->get_result()->fetch_assoc();
+            $stmtF->close();
+            if (!empty($rowF['foto'])) {
+                $old = __DIR__ . '/' . $rowF['foto'];
+                if (is_file($old)) @unlink($old);
+            }
+        }
+    } elseif (!empty($_POST['foto_remover']) && $_POST['foto_remover'] === '1') {
+        // Usuário pediu para remover a foto sem enviar nova
+        $stmtF = $db->prepare('SELECT foto FROM tb_cad_alunos WHERE id = ?');
+        if ($stmtF) {
+            $stmtF->bind_param('i', $id);
+            $stmtF->execute();
+            $rowF = $stmtF->get_result()->fetch_assoc();
+            $stmtF->close();
+            if (!empty($rowF['foto'])) {
+                $old = __DIR__ . '/' . $rowF['foto'];
+                if (is_file($old)) @unlink($old);
+            }
+        }
+        $fotoPath = '';
+    } else {
+        // Nenhum novo arquivo — recupera o caminho atual do banco
+        $stmtF = $db->prepare('SELECT foto FROM tb_cad_alunos WHERE id = ?');
+        $fotoPath = '';
+        if ($stmtF) {
+            $stmtF->bind_param('i', $id);
+            $stmtF->execute();
+            $rowF = $stmtF->get_result()->fetch_assoc();
+            $stmtF->close();
+            $fotoPath = $rowF['foto'] ?? '';
+        }
+    }
+
     $stmt = $db->prepare(
         'UPDATE tb_cad_alunos SET
             nome=?, sexo=?, cpf=?, estado_civil=?, profissao=?,
             telefone=?, usuario_email=?,
             cep=?, logradouro=?, numero_endereco=?, complemento_endereco=?,
             bairro=?, cidade=?, UF=?,
-            data_matricula=?, turma=?, observacoes=?, status=?
+            data_matricula=?, turma=?, observacoes=?, status=?, foto=?, docente=?
          WHERE id=?'
     );
     if (!$stmt) {
@@ -224,18 +374,28 @@ function handlePut($db) {
         echo json_encode(['ok' => false, 'msg' => 'Erro ao preparar atualização: ' . $db->error]);
         return;
     }
+
     $stmt->bind_param(
-        'ssssssssssssssssssi',
+        'ssssssssssssssssssssi',
         $d['nome'], $d['sexo'], $d['cpf'], $d['estado_civil'], $d['profissao'],
         $d['telefone'], $d['email'],
         $d['cep'], $d['logradouro'], $d['numero_endereco'], $d['complemento'],
         $d['bairro'], $d['cidade'], $d['UF'],
         $d['data_matricula'], $d['turma'], $d['observacoes'], $d['status'],
+        $fotoPath,
+        $d['docente'],
         $id
     );
 
     if ($stmt->execute()) {
         $stmt->close();
+        // data_nascimento em statement separado: evita problema de string vazia em coluna DATE
+        if ($d['data_nascimento'] !== '') {
+            $s2 = $db->prepare('UPDATE tb_cad_alunos SET data_nascimento=? WHERE id=?');
+            if ($s2) { $s2->bind_param('si', $d['data_nascimento'], $id); $s2->execute(); $s2->close(); }
+        } else {
+            $db->query("UPDATE tb_cad_alunos SET data_nascimento=NULL WHERE id=$id");
+        }
         echo json_encode(['ok' => true, 'msg' => 'Aluno atualizado com sucesso.']);
     } else {
         $erro = $db->error;
@@ -288,7 +448,7 @@ function validar(array $d, $db, ?int $editId): array {
     }
 
     if (empty($d['data_nascimento'])) {
-        // data_nascimento não está na tabela, ignoramos silenciosamente
+        // campo opcional — permite nulo
     }
 
     $sexo = $d['sexo'] ?? '';
@@ -330,26 +490,75 @@ function sanitize(array $d): array {
     $cep = preg_replace('/\D/', '', $d['cep'] ?? '');
     $num = preg_replace('/\D/', '', $d['numero'] ?? '');
 
+    // ── CORREÇÃO: data_nascimento retorna null se vazia, evitando erro no MySQL ──
+    $dataNasc = trim($d['data_nascimento'] ?? '');
+    $dataNasc = $dataNasc !== '' ? $dataNasc : null;
+
     return [
-        'nome'           => mb_substr(trim($d['nome'] ?? ''), 0, 100),
-        'sexo'           => in_array($d['sexo'] ?? '', ['M','F']) ? $d['sexo'] : 'M',
-        'cpf'            => $cpf,                  // VARCHAR — preserva zeros à esquerda
-        'estado_civil'   => mb_substr(trim($d['estado_civil'] ?? ''), 0, 20),
-        'profissao'      => mb_substr(trim($d['profissao'] ?? ''), 0, 50),
-        'telefone'       => $tel,                  // VARCHAR — 11 dígitos excedem INT
-        'email'          => mb_substr(trim($d['email'] ?? ''), 0, 50),
-        'cep'            => $cep,                  // VARCHAR — preserva zeros à esquerda
-        'logradouro'     => mb_substr(trim($d['logradouro'] ?? ''), 0, 100),
-        'numero_endereco'=> (int) $num,
-        'complemento'    => mb_substr(trim($d['complemento'] ?? ''), 0, 50),
-        'bairro'         => mb_substr(trim($d['bairro'] ?? ''), 0, 60),
-        'cidade'         => mb_substr(trim($d['cidade'] ?? ''), 0, 70),
-        'UF'             => mb_strtoupper(mb_substr(trim($d['estado'] ?? $d['UF'] ?? ''), 0, 5)),
-        'data_matricula' => $d['data_matricula'] ?? date('Y-m-d'),
-        'turma'          => mb_substr(trim($d['turma'] ?? ''), 0, 80),
-        'observacoes'    => mb_substr(trim($d['observacoes'] ?? ''), 0, 500),
-        'status'         => in_array($d['status'] ?? '', ['ativo','pendente','inativo']) ? $d['status'] : 'ativo',
+        'nome'            => mb_substr(trim($d['nome'] ?? ''), 0, 100),
+        'sexo'            => in_array($d['sexo'] ?? '', ['M','F']) ? $d['sexo'] : 'M',
+        'cpf'             => $cpf,
+        'estado_civil'    => mb_substr(trim($d['estado_civil'] ?? ''), 0, 20),
+        'profissao'       => mb_substr(trim($d['profissao'] ?? ''), 0, 50),
+        'telefone'        => $tel,
+        'email'           => mb_substr(trim($d['email'] ?? ''), 0, 50),
+        'cep'             => $cep,
+        'logradouro'      => mb_substr(trim($d['logradouro'] ?? ''), 0, 100),
+        'numero_endereco' => (int) $num,
+        'complemento'     => mb_substr(trim($d['complemento'] ?? ''), 0, 50),
+        'bairro'          => mb_substr(trim($d['bairro'] ?? ''), 0, 60),
+        'cidade'          => mb_substr(trim($d['cidade'] ?? ''), 0, 70),
+        'UF'              => mb_strtoupper(mb_substr(trim($d['estado'] ?? $d['UF'] ?? ''), 0, 5)),
+        'data_nascimento' => $dataNasc,   // null ou 'Y-m-d'
+        'data_matricula'  => $d['data_matricula'] ?? date('Y-m-d'),
+        'turma'           => mb_substr(trim($d['turma'] ?? ''), 0, 80),
+        'observacoes'     => mb_substr(trim($d['observacoes'] ?? ''), 0, 500),
+        'status'          => in_array($d['status'] ?? '', ['ativo','pendente','inativo']) ? $d['status'] : 'ativo',
+        'docente'         => ($d['docente'] ?? 'N') === 'S' ? 'S' : 'N',
     ];
+}
+
+// ══════════════════════════════════════════════════════════
+// Upload de foto do aluno
+// ══════════════════════════════════════════════════════════
+function uploadFoto(array $file): string|false {
+    $allowed = ['image/jpeg', 'image/png', 'image/webp'];
+    // Valida MIME type pelo conteúdo real do arquivo (não pelo que o browser informa)
+    $finfo = finfo_open(FILEINFO_MIME_TYPE);
+    $mime  = finfo_file($finfo, $file['tmp_name']);
+    finfo_close($finfo);
+
+    if (!in_array($mime, $allowed, true)) return false;
+    if ($file['size'] > 2 * 1024 * 1024) return false;
+
+    $ext      = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp'][$mime];
+    $filename = bin2hex(random_bytes(16)) . '.' . $ext;
+    $dir      = __DIR__ . '/uploads/fotos/';
+
+    if (!is_dir($dir)) mkdir($dir, 0755, true);
+
+    $dest = $dir . $filename;
+    if (!move_uploaded_file($file['tmp_name'], $dest)) return false;
+
+    return 'uploads/fotos/' . $filename;
+}
+
+// ══════════════════════════════════════════════════════════
+// Migração: garante que a coluna foto existe na tabela
+// ══════════════════════════════════════════════════════════
+function ensureFotoColumn($db): void {
+    $res = $db->query("SHOW COLUMNS FROM tb_cad_alunos LIKE 'foto'");
+    if ($res && $res->num_rows === 0) {
+        $db->query("ALTER TABLE tb_cad_alunos ADD COLUMN foto VARCHAR(255) NOT NULL DEFAULT ''");
+    }
+    $res2 = $db->query("SHOW COLUMNS FROM tb_cad_alunos LIKE 'docente'");
+    if ($res2 && $res2->num_rows === 0) {
+        $db->query("ALTER TABLE tb_cad_alunos ADD COLUMN docente CHAR(1) NOT NULL DEFAULT 'N'");
+    }
+    $res3 = $db->query("SHOW COLUMNS FROM tb_cad_alunos LIKE 'data_nascimento'");
+    if ($res3 && $res3->num_rows === 0) {
+        $db->query("ALTER TABLE tb_cad_alunos ADD COLUMN data_nascimento DATE NULL DEFAULT NULL");
+    }
 }
 
 function cpfValido(string $cpf): bool {
