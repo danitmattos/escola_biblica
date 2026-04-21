@@ -4,19 +4,9 @@
  * Aceita: GET (listar/buscar/obter), POST (criar), PUT (editar), DELETE (excluir)
  */
 
-session_start();
-header('Content-Type: application/json; charset=utf-8');
-
-// ── Proteção: apenas usuários autenticados ─────────────────
-if (!isset($_SESSION['usuario'])) {
-    http_response_code(401);
-    echo json_encode(['ok' => false, 'msg' => 'Não autenticado.']);
-    exit;
-}
-
-require_once __DIR__ . '/libs/connection.php';
-
-mysqli_report(MYSQLI_REPORT_OFF);
+require_once __DIR__ . '/libs/helpers.php';
+/** @var mysqli $conexao */
+requireAuth();
 
 $method = $_SERVER['REQUEST_METHOD'];
 // Override de método para suportar PUT via formulários
@@ -25,8 +15,10 @@ if ($method === 'POST' && !empty($_GET['_method'])) {
     if (in_array($override, ['PUT', 'DELETE'], true)) $method = $override;
 }
 
-// Garante que a tabela existe
-ensureTable($conexao);
+// Valida CSRF somente para métodos que alteram dados
+if (in_array($method, ['POST', 'PUT', 'DELETE'], true)) {
+    csrfCheck();
+}
 
 switch ($method) {
     case 'GET':    handleGet($conexao);    break;
@@ -46,7 +38,7 @@ function handleGet($db) {
     if (!empty($_GET['id'])) {
         $id   = (int) $_GET['id'];
         $stmt = $db->prepare('SELECT id, nome_turma FROM tb_cad_turmas WHERE id = ?');
-        if (!$stmt) { jsonError(500, $db->error); return; }
+        if (!$stmt) { jsonError(500, 'Erro interno.'); return; }
         $stmt->bind_param('i', $id);
         $stmt->execute();
         $row = $stmt->get_result()->fetch_assoc();
@@ -58,14 +50,32 @@ function handleGet($db) {
 
     // Listar / buscar
     $busca = trim($_GET['busca'] ?? '');
+    $page  = max(1, (int)($_GET['page']  ?? 1));
+    $limit = max(1, min(100, (int)($_GET['limit'] ?? 25)));
+    $offset = ($page - 1) * $limit;
+
     if ($busca !== '') {
         $like = '%' . $busca . '%';
-        $stmt = $db->prepare('SELECT id, nome_turma FROM tb_cad_turmas WHERE nome_turma LIKE ? ORDER BY nome_turma ASC');
-        if (!$stmt) { jsonError(500, $db->error); return; }
-        $stmt->bind_param('s', $like);
+        $stCount = $db->prepare('SELECT COUNT(*) AS c FROM tb_cad_turmas WHERE nome_turma LIKE ?');
+        if (!$stCount) { jsonError(500, 'Erro interno.'); return; }
+        $stCount->bind_param('s', $like);
+        $stCount->execute();
+        $totalRows = $stCount->get_result()->fetch_assoc()['c'];
+        $stCount->close();
+
+        $stmt = $db->prepare('SELECT id, nome_turma FROM tb_cad_turmas WHERE nome_turma LIKE ? ORDER BY nome_turma ASC LIMIT ? OFFSET ?');
+        if (!$stmt) { jsonError(500, 'Erro interno.'); return; }
+        $stmt->bind_param('sii', $like, $limit, $offset);
     } else {
-        $stmt = $db->prepare('SELECT id, nome_turma FROM tb_cad_turmas ORDER BY nome_turma ASC');
-        if (!$stmt) { jsonError(500, $db->error); return; }
+        $stCount = $db->prepare('SELECT COUNT(*) AS c FROM tb_cad_turmas');
+        if (!$stCount) { jsonError(500, 'Erro interno.'); return; }
+        $stCount->execute();
+        $totalRows = $stCount->get_result()->fetch_assoc()['c'];
+        $stCount->close();
+
+        $stmt = $db->prepare('SELECT id, nome_turma FROM tb_cad_turmas ORDER BY nome_turma ASC LIMIT ? OFFSET ?');
+        if (!$stmt) { jsonError(500, 'Erro interno.'); return; }
+        $stmt->bind_param('ii', $limit, $offset);
     }
     $stmt->execute();
     $result  = $stmt->get_result();
@@ -84,7 +94,16 @@ function handleGet($db) {
     }
     unset($t);
 
-    echo json_encode(['ok' => true, 'turmas' => $turmas, 'total' => count($turmas)]);
+    $totalPages = max(1, (int)ceil($totalRows / $limit));
+
+    echo json_encode([
+        'ok'          => true,
+        'turmas'      => $turmas,
+        'total'       => (int)$totalRows,
+        'page'        => $page,
+        'limit'       => $limit,
+        'total_pages' => $totalPages
+    ]);
 }
 
 // ══════════════════════════════════════════════════════════
@@ -113,7 +132,7 @@ function handlePost($db) {
     $stmt->close();
 
     $stmt = $db->prepare('INSERT INTO tb_cad_turmas (nome_turma) VALUES (?)');
-    if (!$stmt) { jsonError(500, $db->error); return; }
+    if (!$stmt) { jsonError(500, 'Erro interno.'); return; }
     $stmt->bind_param('s', $nome);
 
     if ($stmt->execute()) {
@@ -122,8 +141,8 @@ function handlePost($db) {
         http_response_code(201);
         echo json_encode(['ok' => true, 'msg' => 'Turma cadastrada com sucesso.', 'id' => $id]);
     } else {
-        $err = $db->error; $stmt->close();
-        jsonError(500, 'Erro ao cadastrar turma: ' . $err);
+        $stmt->close();
+        jsonError(500, 'Erro ao cadastrar turma.');
     }
 }
 
@@ -164,7 +183,7 @@ function handlePut($db) {
     $nomeAntigo = $rowOld['nome_turma'] ?? '';
 
     $stmt = $db->prepare('UPDATE tb_cad_turmas SET nome_turma = ? WHERE id = ?');
-    if (!$stmt) { jsonError(500, $db->error); return; }
+    if (!$stmt) { jsonError(500, 'Erro interno.'); return; }
     $stmt->bind_param('si', $nome, $id);
 
     if ($stmt->execute() && $stmt->affected_rows >= 0) {
@@ -176,8 +195,8 @@ function handlePut($db) {
         }
         echo json_encode(['ok' => true, 'msg' => 'Turma atualizada com sucesso.']);
     } else {
-        $err = $db->error; $stmt->close();
-        jsonError(500, 'Erro ao atualizar turma: ' . $err);
+        $stmt->close();
+        jsonError(500, 'Erro ao atualizar turma.');
     }
 }
 
@@ -210,7 +229,7 @@ function handleDelete($db) {
     }
 
     $stmt = $db->prepare('DELETE FROM tb_cad_turmas WHERE id = ?');
-    if (!$stmt) { jsonError(500, $db->error); return; }
+    if (!$stmt) { jsonError(500, 'Erro interno.'); return; }
     $stmt->bind_param('i', $id);
 
     if ($stmt->execute() && $stmt->affected_rows > 0) {
@@ -228,12 +247,4 @@ function handleDelete($db) {
 function jsonError(int $code, string $msg): void {
     http_response_code($code);
     echo json_encode(['ok' => false, 'msg' => $msg]);
-}
-
-function ensureTable($db): void {
-    $db->query("CREATE TABLE IF NOT EXISTS tb_cad_turmas (
-        id         INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-        nome_turma VARCHAR(50)  NULL,
-        UNIQUE KEY uq_nome_turma (nome_turma)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci");
 }

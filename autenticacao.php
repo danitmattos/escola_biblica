@@ -1,10 +1,18 @@
 <?php
 session_start();
-include 'libs/connection.php';
+require_once __DIR__ . '/libs/env.php';
+require_once __DIR__ . '/libs/connection.php';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $usuario_email = trim($_POST['usuario_email']);
-    $senha = $_POST['usuario_senha'];
+    // Verifica CSRF token
+    $token = $_POST['csrf_token'] ?? '';
+    if (empty($_SESSION['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $token)) {
+        header('Location: login.php?erro=' . urlencode('Sessão expirada. Tente novamente.'));
+        exit();
+    }
+
+    $usuario_email = trim($_POST['usuario_email'] ?? '');
+    $senha = $_POST['usuario_senha'] ?? '';
 
     // Usando prepared statement para maior segurança
     $stmt = $conexao->prepare("SELECT * FROM tb_cad_alunos WHERE usuario_email = ? LIMIT 1");

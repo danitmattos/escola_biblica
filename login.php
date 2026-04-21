@@ -7,6 +7,12 @@ if (isset($_SESSION['usuario'])) {
     exit();
 }
 
+// CSRF token
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+$csrf_token = $_SESSION['csrf_token'];
+
 // Erro vindo de autenticacao.php via query string
 $erro = isset($_GET['erro']) ? htmlspecialchars($_GET['erro'], ENT_QUOTES, 'UTF-8') : '';
 ?>
@@ -16,7 +22,16 @@ $erro = isset($_GET['erro']) ? htmlspecialchars($_GET['erro'], ENT_QUOTES, 'UTF-
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Login — Escola Bíblica</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,200..800;1,200..800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css" />
+  <script>
+    (function(){
+      var t = localStorage.getItem('escola-theme');
+      if (t === 'dark') document.documentElement.setAttribute('data-theme','dark');
+    })();
+  </script>
   <style>
     /* Ícones simples via SVG inline (sem dependência externa) */
     .icon { width: 20px; height: 20px; fill: currentColor; vertical-align: middle; }
@@ -106,7 +121,7 @@ $erro = isset($_GET['erro']) ? htmlspecialchars($_GET['erro'], ENT_QUOTES, 'UTF-
       align-items: center;
       gap: var(--space-2);
       cursor: pointer;
-      color: var(--color-gray-600);
+      color: var(--color-text-muted);
     }
 
     .checkbox-label input[type="checkbox"] {
@@ -169,12 +184,7 @@ $erro = isset($_GET['erro']) ? htmlspecialchars($_GET['erro'], ENT_QUOTES, 'UTF-
 
       <!-- Logo / Marca -->
       <div class="auth-card__logo">
-        <div class="brand-icon">
-          <!-- Ícone de livro aberto -->
-          <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-            <path d="M12 2C9.5 2 7.5 3 6 4.5 4.5 3 2.5 2 0 2v18c2.5 0 4.5 1 6 2.5C7.5 21 9.5 20 12 20c2.5 0 4.5 1 6 2.5C19.5 21 21.5 20 24 20V2c-2.5 0-4.5 1-6 2.5C16.5 3 14.5 2 12 2zm-1 15.5c-1.2-.8-2.7-1.3-5-1.5V5c2.3.2 3.8.7 5 1.5v11zm8 0c-2.3.2-3.8.7-5 1.5V6.5c1.2-.8 2.7-1.3 5-1.5v12.5z"/>
-          </svg>
-        </div>
+        <img src="uploads/logo.png" alt="Logo Ministério do Belém" style="width:100px;height:100px;object-fit:contain;margin:0 auto var(--space-4);display:block">
         <div class="brand-name">Escola Bíblica</div>
         <p class="brand-tagline">Sistema de Gestão de Alunos</p>
       </div>
@@ -187,6 +197,7 @@ $erro = isset($_GET['erro']) ? htmlspecialchars($_GET['erro'], ENT_QUOTES, 'UTF-
 
       <!-- Formulário -->
       <form id="loginForm" method="POST" action="autenticacao.php" novalidate>
+        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrf_token, ENT_QUOTES, 'UTF-8') ?>">
 
         <!-- E-mail -->
         <div class="form-group">
@@ -290,15 +301,59 @@ $erro = isset($_GET['erro']) ? htmlspecialchars($_GET['erro'], ENT_QUOTES, 'UTF-
     const btnLogin      = document.getElementById('btnLogin');
 
     function setFieldError(input, errorEl, msg) {
-      input.classList.toggle('is-invalid', !!msg);
-      errorEl.textContent = msg;
+      input.classList.remove('is-invalid', 'is-valid');
+      errorEl.textContent = msg || '';
+      errorEl.classList.remove('form-success');
+      if (msg) {
+        input.classList.add('is-invalid');
+      } else if (input.value.trim()) {
+        input.classList.add('is-valid');
+        errorEl.textContent = '✓';
+        errorEl.classList.add('form-success');
+      }
     }
 
     function clearErrors() {
       setFieldError(emailInput, emailError, '');
       setFieldError(passwordInput, passwordError, '');
+      emailInput.classList.remove('is-valid');
+      passwordInput.classList.remove('is-valid');
+      emailError.textContent = '';
+      passwordError.textContent = '';
       alertError.classList.remove('visible');
     }
+
+    // ── Validação em tempo real ──────────────────
+    let emailTouched = false, passTouched = false;
+
+    function validateEmail() {
+      const v = emailInput.value.trim();
+      if (!v) return 'Informe o e-mail.';
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return 'E-mail inválido.';
+      return '';
+    }
+    function validatePassword() {
+      const v = passwordInput.value;
+      if (!v) return 'Informe a senha.';
+      if (v.length < 6) return 'A senha deve ter pelo menos 6 caracteres.';
+      return '';
+    }
+
+    emailInput.addEventListener('blur', () => {
+      emailTouched = true;
+      setFieldError(emailInput, emailError, validateEmail());
+    });
+    emailInput.addEventListener('input', () => {
+      if (emailTouched) setFieldError(emailInput, emailError, validateEmail());
+    });
+
+    passwordInput.addEventListener('blur', () => {
+      passTouched = true;
+      setFieldError(passwordInput, passwordError, validatePassword());
+    });
+    passwordInput.addEventListener('input', () => {
+      if (passTouched) setFieldError(passwordInput, passwordError, validatePassword());
+    });
 
     function setLoading(loading) {
       btnLogin.disabled        = loading;
@@ -307,29 +362,18 @@ $erro = isset($_GET['erro']) ? htmlspecialchars($_GET['erro'], ENT_QUOTES, 'UTF-
     }
 
     form.addEventListener('submit', (e) => {
-      clearErrors();
+      emailTouched = true;
+      passTouched = true;
 
-      const email    = emailInput.value.trim();
-      const password = passwordInput.value;
-      let valid = true;
+      const emailMsg = validateEmail();
+      const passMsg  = validatePassword();
 
-      if (!email) {
-        setFieldError(emailInput, emailError, 'Informe o e-mail.');
-        valid = false;
-      } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-        setFieldError(emailInput, emailError, 'E-mail inválido.');
-        valid = false;
-      }
+      if (emailMsg) setFieldError(emailInput, emailError, emailMsg);
+      else { emailInput.classList.remove('is-invalid','is-valid'); emailError.textContent=''; }
+      if (passMsg) setFieldError(passwordInput, passwordError, passMsg);
+      else { passwordInput.classList.remove('is-invalid','is-valid'); passwordError.textContent=''; }
 
-      if (!password) {
-        setFieldError(passwordInput, passwordError, 'Informe a senha.');
-        valid = false;
-      } else if (password.length < 6) {
-        setFieldError(passwordInput, passwordError, 'A senha deve ter pelo menos 6 caracteres.');
-        valid = false;
-      }
-
-      if (!valid) {
+      if (emailMsg || passMsg) {
         e.preventDefault();
         return;
       }

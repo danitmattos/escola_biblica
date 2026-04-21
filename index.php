@@ -1,16 +1,23 @@
 <?php
 session_start();
-
 // Protege a página — redireciona para login se não autenticado
 if (!isset($_SESSION['usuario'])) {
   header('Location: login.php');
   exit();
 }
 
+// Gera CSRF token para todas as requisições do front-end
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+$csrf_token = $_SESSION['csrf_token'];
+
 $usuario = htmlspecialchars($_SESSION['usuario'] ?? 'Administrador', ENT_QUOTES, 'UTF-8');
 $usuario_email = htmlspecialchars($_SESSION['usuario_email'] ?? '', ENT_QUOTES, 'UTF-8');
 $usuario_foto  = htmlspecialchars($_SESSION['usuario_foto']  ?? '', ENT_QUOTES, 'UTF-8');
+$usuario_id    = (int)($_SESSION['usuario_id'] ?? 0);
 $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES, 'UTF-8') : 'dashboard';
+?>
 ?>
 <!DOCTYPE html>
 <html lang="pt-BR">
@@ -18,13 +25,42 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="csrf-token" content="<?= htmlspecialchars($csrf_token, ENT_QUOTES, 'UTF-8') ?>">
   <title>Escola Bíblica — Sistema de Gestão</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,200..800;1,200..800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css?v=<?php echo filemtime('style.css'); ?>" />
+  <script src="libs/helpers.js?v=<?php echo filemtime('libs/helpers.js'); ?>"></script>
   <!-- Aplica o tema salvo antes de renderizar (evita flash) -->
   <script>
     (function(){
       var t = localStorage.getItem('escola-theme');
       if (t === 'dark') document.documentElement.setAttribute('data-theme','dark');
+    })();
+  </script>
+  <script>
+    // Injeta CSRF token automaticamente em todos os fetch() que modificam dados
+    (function(){
+      var _fetch = window.fetch;
+      var csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+      window.fetch = function(url, opts) {
+        opts = opts || {};
+        var method = (opts.method || 'GET').toUpperCase();
+        if (method !== 'GET' && method !== 'HEAD') {
+          opts.headers = opts.headers || {};
+          // Se for Headers object, converte para plain object
+          if (opts.headers instanceof Headers) {
+            var h = {};
+            opts.headers.forEach(function(v, k) { h[k] = v; });
+            opts.headers = h;
+          }
+          if (!opts.headers['X-CSRF-Token']) {
+            opts.headers['X-CSRF-Token'] = csrfToken;
+          }
+        }
+        return _fetch.call(this, url, opts);
+      };
     })();
   </script>
 </head>
@@ -40,9 +76,7 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
 
     <!-- Logo -->
     <div class="sidebar__logo">
-      <svg style="width:28px;height:28px;fill:white;flex-shrink:0" viewBox="0 0 24 24">
-        <path d="M12 2C9.5 2 7.5 3 6 4.5 4.5 3 2.5 2 0 2v18c2.5 0 4.5 1 6 2.5C7.5 21 9.5 20 12 20c2.5 0 4.5 1 6 2.5C19.5 21 21.5 20 24 20V2c-2.5 0-4.5 1-6 2.5C16.5 3 14.5 2 12 2zm-1 15.5c-1.2-.8-2.7-1.3-5-1.5V5c2.3.2 3.8.7 5 1.5v11zm8 0c-2.3.2-3.8.7-5 1.5V6.5c1.2-.8 2.7-1.3 5-1.5v12.5z" />
-      </svg>
+      <img src="uploads/logo.png" alt="Logo" style="width:36px;height:36px;object-fit:contain;flex-shrink:0">
       Escola Bíblica
     </div>
 
@@ -56,6 +90,10 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
           <path d="M10.707 2.293a1 1 0 00-1.414 0l-7 7a1 1 0 001.414 1.414L4 10.414V17a1 1 0 001 1h2a1 1 0 001-1v-2a1 1 0 011-1h2a1 1 0 011 1v2a1 1 0 001 1h2a1 1 0 001-1v-6.586l.293.293a1 1 0 001.414-1.414l-7-7z" />
         </svg>
         Dashboard
+      </a>
+      <a href="index.php?pagina=biblia" class="sidebar__link <?= $pagina === 'biblia' ? 'active' : '' ?>">
+        <svg class="icon" viewBox="0 0 20 20"><path d="M4 4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2H4zm0 2h12v10H4V6zm2 2v6h2V8H6zm4 0v6h2V8h-2z"/></svg>
+        Bíblia
       </a>
 
       <!-- ── ALUNOS ── -->
@@ -106,7 +144,7 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
       </div>
 
       <!-- ── AULAS ── -->
-      <div class="sidebar__group <?= in_array($pagina, ['aulas', 'tema-novo', 'tema-editar', 'tema-detalhe', 'aula-nova', 'frequencia', 'cronograma', 'calendario']) ? 'open' : '' ?>">
+      <div class="sidebar__group <?= in_array($pagina, ['aulas', 'tema-novo', 'tema-editar', 'tema-detalhe', 'aula-nova', 'frequencia', 'cronograma', 'calendario', 'aula-pratica']) ? 'open' : '' ?>">
         <button class="sidebar__group-btn" data-group>
           <span class="btn-left">
             <svg class="icon" viewBox="0 0 20 20">
@@ -125,6 +163,7 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
             <a href="index.php?pagina=tema-novo" class="sidebar__submenu-link <?= $pagina === 'tema-novo' ? 'active' : '' ?>">Novo Tema</a>
             <a href="index.php?pagina=cronograma" class="sidebar__submenu-link <?= $pagina === 'cronograma' ? 'active' : '' ?>">Cronograma</a>
             <a href="index.php?pagina=frequencia" class="sidebar__submenu-link <?= $pagina === 'frequencia' ? 'active' : '' ?>">Frequência</a>
+            <a href="index.php?pagina=aula-pratica" class="sidebar__submenu-link <?= $pagina === 'aula-pratica' ? 'active' : '' ?>">Aula na Prática</a>
           </div>
         </div>
       </div>
@@ -132,7 +171,7 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
       <!-- ── RELATÓRIOS ── -->
       <div class="sidebar__section-title">Análise</div>
 
-      <div class="sidebar__group <?= in_array($pagina, ['rel-geral', 'rel-turma', 'rel-aluno']) ? 'open' : '' ?>">
+      <div class="sidebar__group <?= in_array($pagina, ['rel-geral', 'rel-turma', 'rel-aluno', 'rel-risco']) ? 'open' : '' ?>">
         <button class="sidebar__group-btn" data-group>
           <span class="btn-left">
             <svg class="icon" viewBox="0 0 20 20">
@@ -149,9 +188,24 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
             <a href="index.php?pagina=rel-geral" class="sidebar__submenu-link <?= $pagina === 'rel-geral' ? 'active' : '' ?>">Frequência Geral</a>
             <a href="index.php?pagina=rel-turma" class="sidebar__submenu-link <?= $pagina === 'rel-turma' ? 'active' : '' ?>">Por Turma</a>
             <a href="index.php?pagina=rel-aluno" class="sidebar__submenu-link <?= $pagina === 'rel-aluno' ? 'active' : '' ?>">Por Aluno</a>
+            <a href="index.php?pagina=rel-risco" class="sidebar__submenu-link <?= $pagina === 'rel-risco' ? 'active' : '' ?>">Alunos em Risco</a>
           </div>
         </div>
       </div>
+
+      <a href="index.php?pagina=certificados" class="sidebar__link <?= $pagina === 'certificados' ? 'active' : '' ?>">
+        <svg class="icon" viewBox="0 0 20 20">
+          <path fill-rule="evenodd" d="M6.267 3.455a3.066 3.066 0 001.745-.723 3.066 3.066 0 013.976 0 3.066 3.066 0 001.745.723 3.066 3.066 0 012.812 2.812c.051.643.304 1.254.723 1.745a3.066 3.066 0 010 3.976 3.066 3.066 0 00-.723 1.745 3.066 3.066 0 01-2.812 2.812 3.066 3.066 0 00-1.745.723 3.066 3.066 0 01-3.976 0 3.066 3.066 0 00-1.745-.723 3.066 3.066 0 01-2.812-2.812 3.066 3.066 0 00-.723-1.745 3.066 3.066 0 010-3.976 3.066 3.066 0 00.723-1.745 3.066 3.066 0 012.812-2.812zm7.44 5.252a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+        </svg>
+        Certificados
+      </a>
+
+      <a href="index.php?pagina=vendas" class="sidebar__link <?= $pagina === 'vendas' ? 'active' : '' ?>">
+        <svg class="icon" viewBox="0 0 20 20">
+          <path fill-rule="evenodd" d="M4 4a2 2 0 00-2 2v4a2 2 0 002 2V6h10a2 2 0 00-2-2H4zm2 6a2 2 0 012-2h8a2 2 0 012 2v4a2 2 0 01-2 2H8a2 2 0 01-2-2v-4zm6 1a1 1 0 100 2 1 1 0 000-2z" clip-rule="evenodd" />
+        </svg>
+        Vendas
+      </a>
 
       <!-- ── CONFIGURAÇÕES ── -->
       <div class="sidebar__section-title">Sistema</div>
@@ -199,18 +253,83 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
     </div>
     <div class="header__actions">
       <!-- Notificações -->
-      <button class="btn btn-ghost btn-sm" style="position:relative" title="Notificações">
-        <svg style="width:20px;height:20px;fill:currentColor" viewBox="0 0 20 20">
-          <path d="M10 2a6 6 0 00-6 6v3.586l-.707.707A1 1 0 004 14h12a1 1 0 00.707-1.707L16 11.586V8a6 6 0 00-6-6zM10 18a3 3 0 01-3-3h6a3 3 0 01-3 3z" />
-        </svg>
-        <span style="position:absolute;top:4px;right:4px;width:8px;height:8px;background:var(--color-danger);border-radius:50%;"></span>
-      </button>
+      <div class="notif-wrap" id="notifWrap">
+        <button class="btn btn-ghost btn-sm" id="notifBtn" style="position:relative" title="Próximas aulas">
+          <svg style="width:20px;height:20px;fill:currentColor" viewBox="0 0 20 20">
+            <path d="M10 2a6 6 0 00-6 6v3.586l-.707.707A1 1 0 004 14h12a1 1 0 00.707-1.707L16 11.586V8a6 6 0 00-6-6zM10 18a3 3 0 01-3-3h6a3 3 0 01-3 3z" />
+          </svg>
+          <span class="notif-badge" id="notifBadge" style="display:none"></span>
+        </button>
+        <div class="notif-popover" id="notifPopover">
+          <div class="notif-popover__header">
+            <svg style="width:16px;height:16px;fill:currentColor;color:var(--color-primary)" viewBox="0 0 20 20"><path d="M10 2a6 6 0 00-6 6v3.586l-.707.707A1 1 0 004 14h12a1 1 0 00.707-1.707L16 11.586V8a6 6 0 00-6-6zM10 18a3 3 0 01-3-3h6a3 3 0 01-3 3z" /></svg>
+            <span>Próximas Aulas</span>
+          </div>
+          <div class="notif-popover__body" id="notifBody">
+            <div class="notif-popover__loading">Carregando...</div>
+          </div>
+          <div class="notif-popover__footer" id="notifFooter" style="display:none">
+            <button class="btn btn-sm btn-secondary" id="notifToggleRead" style="width:100%;justify-content:center">
+              <svg class="notif-toggle-icon" style="width:14px;height:14px;fill:currentColor" viewBox="0 0 20 20"></svg>
+              <span class="notif-toggle-label"></span>
+            </button>
+          </div>
+        </div>
+      </div>
       <!-- Avatar header -->
-      <?php if ($usuario_foto): ?>
-        <img src="<?= $usuario_foto ?>" alt="" style="width:32px;height:32px;border-radius:var(--radius-full);object-fit:cover;flex-shrink:0">
-      <?php else: ?>
-        <div class="avatar" style="width:32px;height:32px;font-size:var(--text-xs)"><?= mb_strtoupper(mb_substr($usuario, 0, 1, 'UTF-8'), 'UTF-8') ?></div>
-      <?php endif; ?>
+      <div class="header-avatar-wrap" id="headerAvatarWrap">
+        <?php if ($usuario_foto): ?>
+          <img src="<?= $usuario_foto ?>" alt="" class="header-avatar-img" id="headerAvatarBtn">
+        <?php else: ?>
+          <div class="avatar header-avatar-img" id="headerAvatarBtn" style="width:32px;height:32px;font-size:var(--text-xs)"><?= mb_strtoupper(mb_substr($usuario, 0, 1, 'UTF-8'), 'UTF-8') ?></div>
+        <?php endif; ?>
+
+        <!-- Popover do perfil -->
+        <div class="profile-popover" id="profilePopover">
+          <div class="profile-popover__header">
+            <div class="profile-popover__avatar">
+              <?php if ($usuario_foto): ?>
+                <img src="<?= $usuario_foto ?>" alt="">
+              <?php else: ?>
+                <div class="avatar" style="width:48px;height:48px;font-size:var(--text-lg)"><?= mb_strtoupper(mb_substr($usuario, 0, 1, 'UTF-8'), 'UTF-8') ?></div>
+              <?php endif; ?>
+            </div>
+            <div class="profile-popover__info">
+              <div class="profile-popover__name" id="ppNome"><?= $usuario ?></div>
+              <div class="profile-popover__email" id="ppEmail"><?= $usuario_email ?></div>
+            </div>
+          </div>
+          <div class="profile-popover__stats" id="ppStats">
+            <div class="profile-popover__stat">
+              <svg style="width:16px;height:16px;fill:currentColor;color:var(--color-primary)" viewBox="0 0 20 20"><path d="M10.394 2.08a1 1 0 00-.788 0l-7 3a1 1 0 000 1.84L5.25 8.051a.999.999 0 01.356-.257l4-1.714a1 1 0 11.788 1.838L7.667 9.088l1.94.831a1 1 0 00.787 0l7-3a1 1 0 000-1.838l-7-3.001zM3.31 9.397L5 10.12v4.102a8.969 8.969 0 00-1.05-.174 1 1 0 01-.89-.89 11.115 11.115 0 01.25-3.762zM9.3 16.573A9.026 9.026 0 007 14.935v-3.547l1.606.688a3 3 0 002.788 0l1.606-.688v3.547a9.026 9.026 0 00-2.3 1.638z"/></svg>
+              <div>
+                <span class="profile-popover__stat-value" id="ppTurma">—</span>
+                <span class="profile-popover__stat-label">Turma</span>
+              </div>
+            </div>
+            <div class="profile-popover__stat">
+              <svg style="width:16px;height:16px;fill:currentColor;color:var(--color-success)" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>
+              <div>
+                <span class="profile-popover__stat-value" id="ppPresencas">—</span>
+                <span class="profile-popover__stat-label" id="ppPresLabel">Presenças no trimestre</span>
+              </div>
+            </div>
+            <div class="profile-popover__stat">
+              <svg style="width:16px;height:16px;fill:currentColor;color:var(--color-warning)" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/></svg>
+              <div>
+                <span class="profile-popover__stat-value" id="ppPontos">—</span>
+                <span class="profile-popover__stat-label">Pontos totais</span>
+              </div>
+            </div>
+          </div>
+          <div class="profile-popover__footer">
+            <a href="logout.php" class="btn btn-sm btn-secondary" style="width:100%;justify-content:center">
+              <svg style="width:14px;height:14px;fill:currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M3 3a1 1 0 00-1 1v12a1 1 0 001 1h12a1 1 0 001-1V4a1 1 0 00-1-1H3zm10.293 9.293a1 1 0 001.414 1.414l3-3a1 1 0 000-1.414l-3-3a1 1 0 10-1.414 1.414L14.586 9H7a1 1 0 100 2h7.586l-1.293 1.293z" clip-rule="evenodd"/></svg>
+              Sair
+            </a>
+          </div>
+        </div>
+      </div>
     </div>
   </header>
 
@@ -220,6 +339,57 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
   <!-- ╚══════════════════════════════════════════════╝ -->
   <div class="main-content">
     <div class="page">
+
+      <?php
+      /* ── Breadcrumbs ────────────────────────────────── */
+      $breadcrumbMap = [
+        'dashboard'        => [['Dashboard','dashboard']],
+        'alunos'           => [['Acadêmico',null],['Alunos','alunos']],
+        'aluno-novo'       => [['Acadêmico',null],['Alunos','alunos'],['Cadastrar','aluno-novo']],
+        'aluno-editar'     => [['Acadêmico',null],['Alunos','alunos'],['Editar','aluno-editar']],
+        'professores'      => [['Acadêmico',null],['Professores','professores']],
+        'professor-novo'   => [['Acadêmico',null],['Professores','professores'],['Cadastrar','professor-novo']],
+        'professor-editar' => [['Acadêmico',null],['Professores','professores'],['Editar','professor-editar']],
+        'turmas'           => [['Acadêmico',null],['Turmas','turmas']],
+        'turma-nova'       => [['Acadêmico',null],['Turmas','turmas'],['Nova Turma','turma-nova']],
+        'turma-editar'     => [['Acadêmico',null],['Turmas','turmas'],['Editar','turma-editar']],
+        'aulas'            => [['Acadêmico',null],['Temas de Aulas','aulas']],
+        'tema-novo'        => [['Acadêmico',null],['Temas de Aulas','aulas'],['Novo Tema','tema-novo']],
+        'tema-editar'      => [['Acadêmico',null],['Temas de Aulas','aulas'],['Editar Tema','tema-editar']],
+        'tema-detalhe'     => [['Acadêmico',null],['Temas de Aulas','aulas'],['Detalhe','tema-detalhe']],
+        'cronograma'       => [['Acadêmico',null],['Cronograma','cronograma']],
+        'calendario'       => [['Acadêmico',null],['Calendário','calendario']],
+        'frequencia'       => [['Acadêmico',null],['Frequência','frequencia']],
+        'aula-pratica'     => [['Acadêmico',null],['Aula na Prática','aula-pratica']],
+        'rel-geral'        => [['Análise',null],['Frequência Geral','rel-geral']],
+        'rel-turma'        => [['Análise',null],['Frequência por Turma','rel-turma']],
+        'rel-aluno'        => [['Análise',null],['Frequência Individual','rel-aluno']],
+        'rel-risco'        => [['Análise',null],['Alunos em Risco','rel-risco']],
+        'certificados'     => [['Análise',null],['Certificados','certificados']],
+        'vendas'           => [['Análise',null],['Vendas','vendas']],
+        'configuracoes'    => [['Sistema',null],['Configurações','configuracoes']],
+      ];
+      $crumbs = $breadcrumbMap[$pagina] ?? [['Página',null]];
+      if ($pagina !== 'dashboard'):
+      ?>
+      <nav class="breadcrumb" aria-label="Breadcrumb">
+        <a href="index.php?pagina=dashboard">
+          <svg style="width:14px;height:14px;fill:currentColor;vertical-align:-2px" viewBox="0 0 20 20"><path d="M10.707 2.293a1 1 0 00-1.414 0l-7 7A1 1 0 003 11h1v6a1 1 0 001 1h3a1 1 0 001-1v-3h2v3a1 1 0 001 1h3a1 1 0 001-1v-6h1a1 1 0 00.707-1.707l-7-7z"/></svg>
+        </a>
+        <?php foreach ($crumbs as $i => $c):
+          $isLast = ($i === count($crumbs) - 1);
+        ?>
+          <span class="breadcrumb__sep">›</span>
+          <?php if ($isLast): ?>
+            <span class="breadcrumb__current"><?= htmlspecialchars($c[0], ENT_QUOTES, 'UTF-8') ?></span>
+          <?php elseif ($c[1]): ?>
+            <a href="index.php?pagina=<?= htmlspecialchars($c[1], ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($c[0], ENT_QUOTES, 'UTF-8') ?></a>
+          <?php else: ?>
+            <span><?= htmlspecialchars($c[0], ENT_QUOTES, 'UTF-8') ?></span>
+          <?php endif; ?>
+        <?php endforeach; ?>
+      </nav>
+      <?php endif; ?>
 
       <?php if ($pagina === 'dashboard'): ?>
         <!-- ══════════════════════════════════════════════ -->
@@ -231,12 +401,6 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
             <h1 class="page-title">Dashboard</h1>
             <p class="page-subtitle">Bem-vindo, <?= $usuario ?>! Aqui está um resumo do sistema.</p>
           </div>
-          <button class="btn btn-primary">
-            <svg class="icon" viewBox="0 0 20 20">
-              <path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd" />
-            </svg>
-            Nova Aula
-          </button>
         </div>
 
         <!-- Stat Cards -->
@@ -305,10 +469,7 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
               <div class="stat-card__value" id="dash-val-aulas">—</div>
               <div class="stat-card__label">Aulas este Mês</div>
               <span class="trend" id="dash-trend-aulas">
-                <svg viewBox="0 0 20 20">
-                  <path fill-rule="evenodd" d="M16.707 10.293a1 1 0 010 1.414l-6 6a1 1 0 01-1.414 0l-6-6a1 1 0 111.414-1.414L9 14.586V3a1 1 0 012 0v11.586l4.293-4.293a1 1 0 011.414 0z" clip-rule="evenodd" />
-                </svg>
-                carregando…
+                <span class="sk sk-h-4" style="width:60px"></span>
               </span>
             </div>
           </div>
@@ -337,10 +498,8 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
                   </tr>
                 </thead>
                 <tbody id="tbody-ultimas-matriculas">
-                  <tr>
-                    <td colspan="4" style="text-align:center;color:var(--color-text-muted);padding:var(--space-6)">Carregando…</td>
-                  </tr>
                 </tbody>
+                <script>document.getElementById('tbody-ultimas-matriculas').innerHTML=skeletonTable(4,4);</script>
               </table>
             </div>
           </div>
@@ -366,10 +525,8 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
                   </tr>
                 </thead>
                 <tbody id="tbody-aniversariantes">
-                  <tr>
-                    <td colspan="3" style="text-align:center;color:var(--color-text-muted);padding:var(--space-6)">Carregando…</td>
-                  </tr>
                 </tbody>
+                <script>document.getElementById('tbody-aniversariantes').innerHTML=skeletonTable(3,4);</script>
               </table>
             </div>
           </div>
@@ -387,37 +544,53 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
               </div>
               <div class="card-body" style="padding-top:var(--space-2)">
                 <div id="dash-domingo-lista">
-                  <div style="text-align:center;padding:var(--space-8);color:var(--color-text-muted)">Carregando…</div>
                 </div>
+                <script>document.getElementById('dash-domingo-lista').innerHTML=skeletonCards(3);</script>
               </div>
             </div>
 
             <!-- Frequência por Turma -->
-            <div class="card">
-              <div class="card-header">
+            <div class="card" id="dash-card-freq-turma">
+              <div class="card-header" style="flex-wrap:wrap;gap:var(--space-2)">
                 <span class="card-title">Frequência por Turma</span>
+                <div style="display:flex;align-items:center;gap:var(--space-2)">
+                  <select id="dash-freq-trimestre" class="form-control" style="width:auto;font-size:var(--text-xs);padding:2px 8px">
+                    <option value="0">Todos os trimestres</option>
+                    <option value="1">1º Trimestre</option>
+                    <option value="2">2º Trimestre</option>
+                    <option value="3">3º Trimestre</option>
+                    <option value="4">4º Trimestre</option>
+                  </select>
+                  <select id="dash-freq-ano" class="form-control" style="width:auto;font-size:var(--text-xs);padding:2px 8px">
+                    <option value="<?= date('Y') ?>"><?= date('Y') ?></option>
+                  </select>
+                  <a href="index.php?pagina=frequencia" class="btn btn-ghost btn-sm">Ver detalhes</a>
+                </div>
               </div>
-              <div class="card-body">
-                <?php
-                $turmas = [
-                  ['nome' => 'Fund. da Fé',       'pct' => 92],
-                  ['nome' => 'A.T. I',             'pct' => 85],
-                  ['nome' => 'N.T. II',            'pct' => 78],
-                  ['nome' => 'Evangelismo',        'pct' => 95],
-                  ['nome' => 'Teol. Sistemática',  'pct' => 70],
-                ];
-                foreach ($turmas as $t): ?>
-                  <div style="margin-bottom:var(--space-4)">
-                    <div class="flex justify-between" style="font-size:var(--text-sm)">
-                      <span><?= $t['nome'] ?></span>
-                      <strong><?= $t['pct'] ?>%</strong>
-                    </div>
-                    <div class="progress-bar">
-                      <div class="progress-bar__fill" style="width:<?= $t['pct'] ?>%;<?= $t['pct'] < 75 ? 'background-color:var(--color-warning)' : '' ?>"></div>
-                    </div>
-                  </div>
-                <?php endforeach; ?>
+              <div class="card-body" id="dash-freq-body">
               </div>
+              <script>document.getElementById('dash-freq-body').innerHTML=skeletonBars(4);</script>
+            </div>
+
+            <!-- Ranking Aula na Prática -->
+            <div class="card" id="dash-card-ranking-pratica">
+              <div class="card-header" style="flex-wrap:wrap;gap:var(--space-2)">
+                <span class="card-title">
+                  <svg style="width:16px;height:16px;fill:currentColor;vertical-align:middle;margin-right:6px;color:var(--color-warning)" viewBox="0 0 20 20">
+                    <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/>
+                  </svg>
+                  Ranking — Aula na Prática
+                </span>
+                <div style="display:flex;align-items:center;gap:var(--space-2)">
+                  <select id="dash-ranking-ano" class="form-control" style="width:auto;font-size:var(--text-xs);padding:2px 8px">
+                    <option value="<?= date('Y') ?>"><?= date('Y') ?></option>
+                  </select>
+                  <a href="index.php?pagina=aula-pratica" class="btn btn-ghost btn-sm">Ver módulo</a>
+                </div>
+              </div>
+              <div id="dash-ranking-pratica-body">
+              </div>
+              <script>document.getElementById('dash-ranking-pratica-body').innerHTML=skeletonBars(5);</script>
             </div>
 
           </div><!-- /col direita -->
@@ -435,8 +608,8 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
             <a href="index.php?pagina=calendario" class="btn btn-ghost btn-sm">Ver calendário</a>
           </div>
           <div id="dash-proximos-lista" style="padding:var(--space-4) var(--space-6);color:var(--color-text-muted);font-size:var(--text-sm)">
-            Carregando…
           </div>
+          <script>document.getElementById('dash-proximos-lista').innerHTML=skeletonCards(3);</script>
         </div>
 
       <?php elseif ($pagina === 'alunos'): ?>
@@ -514,18 +687,14 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
                 </tr>
               </thead>
               <tbody id="tbody-alunos">
-                <tr>
-                  <td colspan="8" class="text-center" style="padding:var(--space-10);color:var(--color-gray-400)">
-                    <svg style="width:32px;height:32px;fill:currentColor;display:block;margin:0 auto var(--space-2)" viewBox="0 0 20 20">
-                      <path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd" />
-                    </svg>
-                    Carregando…
-                  </td>
-                </tr>
               </tbody>
+              <script>document.getElementById('tbody-alunos').innerHTML=skeletonTable(8,5,{avatar:1});</script>
             </table>
           </div>
         </div>
+
+        <!-- Paginação -->
+        <div id="pag-alunos" class="pagination" style="display:none"></div>
 
         <!-- Modal de confirmação de exclusão -->
         <div class="modal-overlay" id="modalExcluir" style="display:none">
@@ -561,12 +730,18 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
             <h1 class="page-title">Cadastrar Aluno</h1>
             <p class="page-subtitle">Preencha os dados do novo aluno para realizar o cadastro.</p>
           </div>
-          <a href="index.php?pagina=alunos" class="btn btn-secondary">
-            <svg class="icon" viewBox="0 0 20 20">
-              <path fill-rule="evenodd" d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z" clip-rule="evenodd" />
-            </svg>
-            Voltar
-          </a>
+          <div style="display:flex;gap:var(--space-3)">
+            <button class="btn btn-secondary" onclick="abrirFichaCadastro()" title="Abrir ficha de cadastro para impressão">
+              <svg class="icon" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M5 4v3H4a2 2 0 00-2 2v3a2 2 0 002 2h1v2a2 2 0 002 2h6a2 2 0 002-2v-2h1a2 2 0 002-2V9a2 2 0 00-2-2h-1V4a2 2 0 00-2-2H7a2 2 0 00-2 2zm8 0H7v3h6V4zm0 8H7v4h6v-4z" clip-rule="evenodd"/></svg>
+              Ficha de Cadastro
+            </button>
+            <a href="index.php?pagina=alunos" class="btn btn-secondary">
+              <svg class="icon" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z" clip-rule="evenodd" />
+              </svg>
+              Voltar
+            </a>
+          </div>
         </div>
 
         <div id="aluno-alert" style="display:none;margin-bottom:var(--space-5)"></div>
@@ -660,8 +835,7 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
                   </select>
                 </div>
                 <div class="form-group" style="margin-bottom:0">
-                  <label class="form-label" for="profissao">Profissão</label>
-                  <input type="text" id="profissao" name="profissao" class="form-control" placeholder="Ex.: Professor(a)" maxlength="80">
+                  <!-- Profissão removida -->
                 </div>
               </div>
 
@@ -672,7 +846,7 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
           <div class="card" style="margin-bottom:var(--space-6)">
             <div class="card-header">
               <span class="card-title" style="display:flex;align-items:center;gap:var(--space-3)">
-                <span style="width:32px;height:32px;border-radius:var(--radius-md);background:#f0fdf4;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                <span style="width:32px;height:32px;border-radius:var(--radius-md);background:var(--color-success-light);display:flex;align-items:center;justify-content:center;flex-shrink:0">
                   <svg style="width:16px;height:16px;fill:var(--color-success)" viewBox="0 0 20 20">
                     <path d="M2 3a1 1 0 011-1h2.153a1 1 0 01.986.836l.74 4.435a1 1 0 01-.54 1.06l-1.548.773a11.037 11.037 0 006.105 6.105l.774-1.548a1 1 0 011.059-.54l4.435.74a1 1 0 01.836.986V17a1 1 0 01-1 1h-2C7.82 18 2 12.18 2 5V3z" />
                   </svg>
@@ -700,7 +874,7 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
           <div class="card" style="margin-bottom:var(--space-6)">
             <div class="card-header">
               <span class="card-title" style="display:flex;align-items:center;gap:var(--space-3)">
-                <span style="width:32px;height:32px;border-radius:var(--radius-md);background:#fffbeb;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                <span style="width:32px;height:32px;border-radius:var(--radius-md);background:var(--color-warning-light);display:flex;align-items:center;justify-content:center;flex-shrink:0">
                   <svg style="width:16px;height:16px;fill:var(--color-warning)" viewBox="0 0 20 20">
                     <path fill-rule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd" />
                   </svg>
@@ -785,7 +959,7 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
           <div class="card" id="cardResponsavel" style="margin-bottom:var(--space-6);display:none">
             <div class="card-header">
               <span class="card-title" style="display:flex;align-items:center;gap:var(--space-3)">
-                <span style="width:32px;height:32px;border-radius:var(--radius-md);background:#fef2f2;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                <span style="width:32px;height:32px;border-radius:var(--radius-md);background:var(--color-danger-light);display:flex;align-items:center;justify-content:center;flex-shrink:0">
                   <svg style="width:16px;height:16px;fill:var(--color-danger)" viewBox="0 0 20 20">
                     <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3zM6 8a2 2 0 11-4 0 2 2 0 014 0zM16 18v-3a5.972 5.972 0 00-.75-2.906A3.005 3.005 0 0119 15v3h-3zM4.75 12.094A5.973 5.973 0 004 15v3H1v-3a3 3 0 013.75-2.906z" />
                   </svg>
@@ -1001,8 +1175,7 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
                   </select>
                 </div>
                 <div class="form-group" style="margin-bottom:0">
-                  <label class="form-label" for="profissao">Profissão</label>
-                  <input type="text" id="profissao" name="profissao" class="form-control" placeholder="Ex.: Professor(a)" maxlength="80">
+                  <!-- Profissão removida -->
                 </div>
               </div>
             </div>
@@ -1012,7 +1185,7 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
           <div class="card" style="margin-bottom:var(--space-6)">
             <div class="card-header">
               <span class="card-title" style="display:flex;align-items:center;gap:var(--space-3)">
-                <span style="width:32px;height:32px;border-radius:var(--radius-md);background:#f0fdf4;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                <span style="width:32px;height:32px;border-radius:var(--radius-md);background:var(--color-success-light);display:flex;align-items:center;justify-content:center;flex-shrink:0">
                   <svg style="width:16px;height:16px;fill:var(--color-success)" viewBox="0 0 20 20">
                     <path d="M2 3a1 1 0 011-1h2.153a1 1 0 01.986.836l.74 4.435a1 1 0 01-.54 1.06l-1.548.773a11.037 11.037 0 006.105 6.105l.774-1.548a1 1 0 011.059-.54l4.435.74a1 1 0 01.836.986V17a1 1 0 01-1 1h-2C7.82 18 2 12.18 2 5V3z" />
                   </svg>
@@ -1040,7 +1213,7 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
           <div class="card" style="margin-bottom:var(--space-6)">
             <div class="card-header">
               <span class="card-title" style="display:flex;align-items:center;gap:var(--space-3)">
-                <span style="width:32px;height:32px;border-radius:var(--radius-md);background:#fffbeb;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                <span style="width:32px;height:32px;border-radius:var(--radius-md);background:var(--color-warning-light);display:flex;align-items:center;justify-content:center;flex-shrink:0">
                   <svg style="width:16px;height:16px;fill:var(--color-warning)" viewBox="0 0 20 20">
                     <path fill-rule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd" />
                   </svg>
@@ -1264,12 +1437,8 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
                 </tr>
               </thead>
               <tbody id="tbody-professores">
-                <tr>
-                  <td colspan="8" class="text-center" style="padding:var(--space-10);color:var(--color-gray-400)">
-                    Carregando…
-                  </td>
-                </tr>
               </tbody>
+              <script>document.getElementById('tbody-professores').innerHTML=skeletonTable(8,5,{avatar:1});</script>
             </table>
           </div>
         </div>
@@ -1396,8 +1565,7 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
                   </select>
                 </div>
                 <div class="form-group" style="margin-bottom:0">
-                  <label class="form-label" for="profissao">Profissão</label>
-                  <input type="text" id="profissao" name="profissao" class="form-control" placeholder="Ex.: Pastor(a)" maxlength="80">
+                  <!-- Profissão removida -->
                 </div>
               </div>
             </div>
@@ -1407,7 +1575,7 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
           <div class="card" style="margin-bottom:var(--space-6)">
             <div class="card-header">
               <span class="card-title" style="display:flex;align-items:center;gap:var(--space-3)">
-                <span style="width:32px;height:32px;border-radius:var(--radius-md);background:#f0fdf4;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                <span style="width:32px;height:32px;border-radius:var(--radius-md);background:var(--color-success-light);display:flex;align-items:center;justify-content:center;flex-shrink:0">
                   <svg style="width:16px;height:16px;fill:var(--color-success)" viewBox="0 0 20 20">
                     <path d="M2 3a1 1 0 011-1h2.153a1 1 0 01.986.836l.74 4.435a1 1 0 01-.54 1.06l-1.548.773a11.037 11.037 0 006.105 6.105l.774-1.548a1 1 0 011.059-.54l4.435.74a1 1 0 01.836.986V17a1 1 0 01-1 1h-2C7.82 18 2 12.18 2 5V3z" />
                   </svg>
@@ -1435,7 +1603,7 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
           <div class="card" style="margin-bottom:var(--space-6)">
             <div class="card-header">
               <span class="card-title" style="display:flex;align-items:center;gap:var(--space-3)">
-                <span style="width:32px;height:32px;border-radius:var(--radius-md);background:#fffbeb;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                <span style="width:32px;height:32px;border-radius:var(--radius-md);background:var(--color-warning-light);display:flex;align-items:center;justify-content:center;flex-shrink:0">
                   <svg style="width:16px;height:16px;fill:var(--color-warning)" viewBox="0 0 20 20">
                     <path fill-rule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd" />
                   </svg>
@@ -1660,8 +1828,7 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
                   </select>
                 </div>
                 <div class="form-group" style="margin-bottom:0">
-                  <label class="form-label" for="profissao">Profissão</label>
-                  <input type="text" id="profissao" name="profissao" class="form-control" placeholder="Ex.: Pastor(a)" maxlength="80">
+                  <!-- Profissão removida -->
                 </div>
               </div>
             </div>
@@ -1671,7 +1838,7 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
           <div class="card" style="margin-bottom:var(--space-6)">
             <div class="card-header">
               <span class="card-title" style="display:flex;align-items:center;gap:var(--space-3)">
-                <span style="width:32px;height:32px;border-radius:var(--radius-md);background:#f0fdf4;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                <span style="width:32px;height:32px;border-radius:var(--radius-md);background:var(--color-success-light);display:flex;align-items:center;justify-content:center;flex-shrink:0">
                   <svg style="width:16px;height:16px;fill:var(--color-success)" viewBox="0 0 20 20">
                     <path d="M2 3a1 1 0 011-1h2.153a1 1 0 01.986.836l.74 4.435a1 1 0 01-.54 1.06l-1.548.773a11.037 11.037 0 006.105 6.105l.774-1.548a1 1 0 011.059-.54l4.435.74a1 1 0 01.836.986V17a1 1 0 01-1 1h-2C7.82 18 2 12.18 2 5V3z" />
                   </svg>
@@ -1699,7 +1866,7 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
           <div class="card" style="margin-bottom:var(--space-6)">
             <div class="card-header">
               <span class="card-title" style="display:flex;align-items:center;gap:var(--space-3)">
-                <span style="width:32px;height:32px;border-radius:var(--radius-md);background:#fffbeb;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                <span style="width:32px;height:32px;border-radius:var(--radius-md);background:var(--color-warning-light);display:flex;align-items:center;justify-content:center;flex-shrink:0">
                   <svg style="width:16px;height:16px;fill:var(--color-warning)" viewBox="0 0 20 20">
                     <path fill-rule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd" />
                   </svg>
@@ -1869,11 +2036,14 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
                 </tr>
               </thead>
               <tbody id="tbody-turmas">
-                <tr><td colspan="4" class="text-center" style="padding:var(--space-10);color:var(--color-gray-400)">Carregando…</td></tr>
               </tbody>
+              <script>document.getElementById('tbody-turmas').innerHTML=skeletonTable(4,5);</script>
             </table>
           </div>
         </div>
+
+        <!-- Paginação -->
+        <div id="pag-turmas" class="pagination" style="display:none"></div>
 
         <!-- Modal exclusão -->
         <div class="modal-overlay" id="modalExcluirTurma" style="display:none">
@@ -2027,11 +2197,8 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
 
         <!-- Container dos trimestres -->
         <div id="temas-container">
-          <div style="text-align:center;padding:var(--space-12);color:var(--color-text-muted)">
-            <svg style="width:36px;height:36px;fill:currentColor;margin:0 auto var(--space-3);display:block;opacity:.4" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/></svg>
-            Carregando…
-          </div>
         </div>
+        <script>document.getElementById('temas-container').innerHTML=skeletonSections(3);</script>
 
         <!-- Modal: Confirmar exclusão de tema -->
         <div class="modal-overlay" id="modalExcluirTema" style="display:none">
@@ -2144,7 +2311,7 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
           <!-- Header dinâmico (preenchido por JS) -->
           <div class="page-header" id="tdh-header">
             <div>
-              <h1 class="page-title" id="tdh-titulo">Carregando…</h1>
+              <h1 class="page-title" id="tdh-titulo"><span class="sk sk-h-5" style="width:200px"></span></h1>
               <p class="page-subtitle" id="tdh-sub"></p>
             </div>
             <div style="display:flex;gap:var(--space-3)">
@@ -2183,8 +2350,8 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
                   </tr>
                 </thead>
                 <tbody id="tdh-tbody">
-                  <tr><td colspan="5" style="text-align:center;padding:var(--space-10);color:var(--color-gray-400)">Carregando…</td></tr>
                 </tbody>
+                <script>document.getElementById('tdh-tbody').innerHTML=skeletonTable(5,3);</script>
               </table>
             </div>
           </div>
@@ -2209,9 +2376,15 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
                   <input type="date" id="aula-data" class="form-control">
                 </div>
                 <div class="form-group" style="grid-column:1/-1">
-                  <label class="form-label" for="aula-professor">Professor</label>
+                  <label class="form-label" for="aula-professor">Professor Titular</label>
                   <select id="aula-professor" class="form-control">
                     <option value="">— Selecionar professor —</option>
+                  </select>
+                </div>
+                <div class="form-group" style="grid-column:1/-1">
+                  <label class="form-label" for="aula-professor-substituto">Professor Substituto <span style="color:var(--color-text-muted);font-weight:400">(opcional)</span></label>
+                  <select id="aula-professor-substituto" class="form-control">
+                    <option value="">— Selecionar professor substituto —</option>
                   </select>
                 </div>
                 <div class="form-group" style="grid-column:1/-1">
@@ -2257,6 +2430,16 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
           <div>
             <h1 class="page-title">Cronograma de Aulas</h1>
             <p class="page-subtitle">Todas as aulas organizadas por turma e professor.</p>
+          </div>
+          <div id="cron-export-btns" style="display:none;gap:var(--space-2);flex-wrap:wrap">
+            <button class="btn btn-secondary" id="btnExportarXls" title="Exportar como Excel (.xls)">
+              <svg class="icon" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+              Exportar XLS
+            </button>
+            <button class="btn btn-secondary" id="btnExportarPdf" title="Exportar como PDF">
+              <svg class="icon" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clip-rule="evenodd"/></svg>
+              Exportar PDF
+            </button>
           </div>
         </div>
 
@@ -2381,12 +2564,14 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
                 <div style="grid-column:1/-1" class="form-group">
                   <label class="form-label" for="comp-titulo">Título <span style="color:var(--color-danger)">*</span></label>
                   <input type="text" id="comp-titulo" class="form-control" placeholder="Ex.: Reunião de Professores" maxlength="200">
+                  <span class="form-error" id="comp-titulo-error"></span>
                 </div>
 
                 <!-- Data -->
                 <div class="form-group">
                   <label class="form-label" for="comp-data">Data <span style="color:var(--color-danger)">*</span></label>
                   <input type="date" id="comp-data" class="form-control">
+                  <span class="form-error" id="comp-data-error"></span>
                 </div>
 
                 <!-- Categoria -->
@@ -2448,6 +2633,789 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
           </div>
         </div>
 
+      <?php elseif ($pagina === 'aula-pratica'): ?>
+        <!-- ══════════════════════════════════════════════ -->
+        <!--  AULA NA PRÁTICA                               -->
+        <!-- ══════════════════════════════════════════════ -->
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Aula na Prática</h1>
+            <p class="page-subtitle">Registre pontos dos alunos que respondem às perguntas após a aula.</p>
+          </div>
+          <button class="btn btn-primary" id="btnNovaSessao">
+            <svg class="icon" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd"/></svg>
+            Nova Sessão
+          </button>
+        </div>
+
+        <!-- ── Alerta global ── -->
+        <div id="ap-alert" style="display:none;margin-bottom:var(--space-4)"></div>
+
+        <!-- Etapas dos domingos do trimestre -->
+        <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-2)">
+          <span style="font-size:var(--text-sm);font-weight:600;color:var(--color-text-muted)">Domingos do trimestre:</span>
+          <select id="ap-steps-trimestre" class="form-control" style="width:auto;font-size:var(--text-sm)">
+            <option value="1">1º Trimestre</option>
+            <option value="2">2º Trimestre</option>
+            <option value="3">3º Trimestre</option>
+            <option value="4">4º Trimestre</option>
+          </select>
+          <select id="ap-steps-ano" class="form-control" style="width:auto;font-size:var(--text-sm)">
+            <?php for ($y = date('Y'); $y >= date('Y') - 4; $y--): ?>
+              <option value="<?= $y ?>"><?= $y ?></option>
+            <?php endfor; ?>
+          </select>
+        </div>
+        <div id="ap-steps-domingos"></div>
+
+        <!-- ── Wrapper: lista de sessões + painel ativo ── -->
+        <div style="display:grid;grid-template-columns:340px 1fr;gap:var(--space-6);align-items:start">
+
+          <!-- ══ Coluna esquerda: lista de sessões ══ -->
+          <div class="card" style="min-height:400px">
+            <div class="card-header">
+              <span class="card-title">Sessões</span>
+              <select id="ap-filtro-turma" class="form-control" style="width:auto;font-size:var(--text-xs)">
+                <option value="0">Todas as turmas</option>
+              </select>
+            </div>
+            <!-- Abas Ativas / Arquivadas -->
+            <div style="display:flex;border-bottom:1px solid var(--color-border,#e5e7eb)">
+              <button class="ap-tab active" data-tab="ativas" id="ap-tab-ativas" style="flex:1;padding:var(--space-2) var(--space-3);font-size:var(--text-xs);font-weight:600;background:none;border:none;border-bottom:2px solid var(--color-primary);color:var(--color-primary);cursor:pointer">Ativas</button>
+              <button class="ap-tab" data-tab="arquivadas" id="ap-tab-arquivadas" style="flex:1;padding:var(--space-2) var(--space-3);font-size:var(--text-xs);font-weight:600;background:none;border:none;border-bottom:2px solid transparent;color:var(--color-text-muted);cursor:pointer">Arquivadas</button>
+            </div>
+            <div id="ap-sessoes-lista" style="padding:var(--space-2) 0">
+            </div>
+            <script>document.getElementById('ap-sessoes-lista').innerHTML=skeletonCards(3);</script>
+          </div>
+
+          <!-- ══ Coluna direita: painel da sessão ativa ══ -->
+          <div id="ap-painel" style="display:none;flex-direction:column;gap:var(--space-6)">
+
+            <!-- Cabeçalho da sessão -->
+            <div class="card">
+              <div class="card-body" style="display:flex;align-items:center;justify-content:space-between;gap:var(--space-4);flex-wrap:wrap">
+                <div>
+                  <div style="font-size:var(--text-lg);font-weight:700;color:var(--color-text)" id="ap-sessao-titulo">—</div>
+                  <div style="font-size:var(--text-xs);color:var(--color-text-muted);margin-top:2px" id="ap-sessao-info">—</div>
+                </div>
+                <div style="display:flex;gap:var(--space-2);align-items:center">
+                  <button class="btn btn-warning btn-sm" id="btnEncerrarSessao" title="Encerrar sessão">
+                    <svg class="icon" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11a1 1 0 10-2 0v3.586L7.707 9.293a1 1 0 00-1.414 1.414l3 3a1 1 0 001.414 0l3-3a1 1 0 00-1.414-1.414L11 10.586V7z" clip-rule="evenodd"/></svg>
+                    Encerrar
+                  </button>
+                  <button class="btn btn-success btn-sm" id="btnReabrirSessao" title="Reabrir sessão" style="display:none">
+                    <svg class="icon" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"/></svg>
+                    Reabrir
+                  </button>
+                  <button class="btn btn-danger btn-sm" id="btnExcluirSessao" title="Excluir sessão">
+                    <svg class="icon" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+                    Excluir
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Presença -->
+            <div class="card" id="ap-presenca-card">
+              <div class="card-header">
+                <span class="card-title">
+                  <svg style="width:15px;height:15px;fill:currentColor;vertical-align:middle;margin-right:6px" viewBox="0 0 20 20">
+                    <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z"/>
+                    <path fill-rule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm9.707 5.707a1 1 0 00-1.414-1.414L9 12.586l-1.293-1.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                  </svg>
+                  Presença
+                </span>
+                <span class="badge badge-success" id="ap-presenca-badge">0 presentes</span>
+              </div>
+              <div id="ap-presenca-container" style="padding:var(--space-3) var(--space-4)">
+              </div>
+              <script>document.getElementById('ap-presenca-container').innerHTML=skeletonTable(2,4);</script>
+            </div>
+
+            <!-- Registrar resposta -->
+            <div class="card">
+              <div class="card-header">
+                <span class="card-title">Registrar Resposta</span>
+              </div>
+              <div class="card-body" style="display:flex;flex-direction:column;gap:var(--space-4)">
+                <div id="ap-resposta-alert" style="display:none"></div>
+
+                <!-- Pergunta -->
+                <div class="form-group" style="margin:0">
+                  <label class="form-label" for="ap-pergunta-sel">Pergunta <span style="color:var(--color-text-muted);font-weight:400">(opcional)</span></label>
+                  <select id="ap-pergunta-sel" class="form-control">
+                    <option value="">— Selecionar pergunta —</option>
+                    <option value="__outra__">✏️ Outra pergunta…</option>
+                  </select>
+                  <input type="text" id="ap-pergunta-txt" class="form-control" placeholder="Descreva a pergunta respondida…" maxlength="300" style="margin-top:var(--space-2);display:none">
+                  <!-- Resposta para conferência -->
+                  <div id="ap-resposta-preview" style="display:none;margin-top:var(--space-2);padding:var(--space-3) var(--space-4);background:var(--color-success-bg,#f0fdf4);border:1px solid var(--color-success-border,#bbf7d0);border-radius:var(--radius-md);font-size:var(--text-sm)">
+                    <span style="font-weight:600;color:var(--color-success)">✅ Resposta:</span>
+                    <span id="ap-resposta-preview-txt" style="color:var(--color-success);margin-left:var(--space-2)"></span>
+                  </div>
+                </div>
+
+                <!-- Aluno -->
+                <div class="form-group" style="margin:0">
+                  <label class="form-label" for="ap-aluno">Aluno <span style="color:var(--color-danger)">*</span></label>
+                  <select id="ap-aluno" class="form-control">
+                    <option value="">— Selecionar aluno —</option>
+                  </select>
+                </div>
+
+                <!-- Tipo de resposta -->
+                <div>
+                  <label class="form-label">Tipo de Resposta</label>
+                  <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-3)">
+                    <button type="button" class="btn btn-pratica" id="btnSemLeitura" data-tipo="sem_leitura">
+                      <svg class="icon" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/></svg>
+                      Sem Leitura
+                      <span class="badge badge-warning" style="margin-left:var(--space-1)">+2 pts</span>
+                    </button>
+                    <button type="button" class="btn btn-pratica-sec" id="btnComLeitura" data-tipo="com_leitura">
+                      <svg class="icon" viewBox="0 0 20 20"><path d="M9 4.804A7.968 7.968 0 005.5 4c-1.255 0-2.443.29-3.5.804v10A7.969 7.969 0 015.5 14c1.468 0 2.816.479 3.9 1.272A7.969 7.969 0 0114.5 14c1.255 0 2.443.29 3.5.804v-10A7.968 7.968 0 0014.5 4c-1.255 0-2.443.29-3.5.804V12a1 1 0 11-2 0V4.804z"/></svg>
+                      Com Leitura
+                      <span class="badge badge-primary" style="margin-left:var(--space-1)">+1 pt</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Ranking -->
+            <div class="card">
+              <div class="card-header">
+                <span class="card-title">🏆 Ranking da Sessão</span>
+                <span class="badge badge-primary" id="ap-ranking-count">0 alunos</span>
+              </div>
+              <div id="ap-ranking-container">
+                <div style="padding:var(--space-6);text-align:center;color:var(--color-text-muted)">Nenhuma resposta ainda.</div>
+              </div>
+            </div>
+
+            <!-- Histórico -->
+            <div class="card">
+              <div class="card-header">
+                <span class="card-title">Histórico de Respostas</span>
+              </div>
+              <div class="table-wrapper" style="border:none;border-radius:0;box-shadow:none">
+                <table class="table" id="ap-historico-table">
+                  <thead>
+                    <tr>
+                      <th>Aluno</th>
+                      <th>Pergunta</th>
+                      <th>Tipo</th>
+                      <th>Pontos</th>
+                      <th>Horário</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody id="ap-historico-tbody">
+                    <tr><td colspan="6" style="text-align:center;color:var(--color-text-muted)">Nenhuma resposta ainda.</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+          </div><!-- /ap-painel -->
+
+          <!-- Placeholder quando nenhuma sessão selecionada -->
+          <div id="ap-placeholder" style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:var(--space-16);color:var(--color-text-muted);text-align:center">
+            <svg style="width:56px;height:56px;fill:currentColor;opacity:.3;margin-bottom:var(--space-4)" viewBox="0 0 20 20">
+              <path d="M9 4.804A7.968 7.968 0 005.5 4c-1.255 0-2.443.29-3.5.804v10A7.969 7.969 0 015.5 14c1.468 0 2.816.479 3.9 1.272A7.969 7.969 0 0114.5 14c1.255 0 2.443.29 3.5.804v-10A7.968 7.968 0 0014.5 4c-1.255 0-2.443.29-3.5.804V12a1 1 0 11-2 0V4.804z"/>
+            </svg>
+            <p>Selecione uma sessão na lista<br>ou crie uma nova para começar.</p>
+          </div>
+
+        </div><!-- /grid -->
+
+        <!-- ════════════ MODAL: NOVA SESSÃO ════════════ -->
+        <div class="modal-overlay" id="modalNovaSessao" style="display:none">
+          <div class="modal" style="max-width:480px">
+            <div class="modal-header">
+              <span class="modal-title">Nova Sessão — Aula na Prática</span>
+              <button class="modal-close" id="btnFecharModalSessao">&times;</button>
+            </div>
+            <div class="modal-body">
+              <div id="ns-alert" style="display:none;margin-bottom:var(--space-4)"></div>
+              <div style="display:flex;flex-direction:column;gap:var(--space-4)">
+                <div class="form-group" style="margin:0">
+                  <label class="form-label" for="ns-titulo">Título <span style="color:var(--color-danger)">*</span></label>
+                  <input type="text" id="ns-titulo" class="form-control" placeholder="Ex.: Aula 1 — Gênesis" maxlength="200">
+                  <span class="form-error" id="ns-titulo-error"></span>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-4)">
+                  <div class="form-group" style="margin:0">
+                    <label class="form-label" for="ns-data">Data</label>
+                    <input type="date" id="ns-data" class="form-control" value="<?= date('Y-m-d') ?>">
+                  </div>
+                  <div class="form-group" style="margin:0">
+                    <label class="form-label" for="ns-turma">Turma</label>
+                    <select id="ns-turma" class="form-control">
+                      <option value="0">— Todas —</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="form-group" style="margin:0">
+                  <label class="form-label" for="ns-aula">Aula <span style="color:var(--color-text-muted);font-weight:400">(opcional)</span></label>
+                  <select id="ns-aula" class="form-control">
+                    <option value="0">— Selecionar aula —</option>
+                  </select>
+                </div>
+                <div class="form-group" style="margin:0">
+                  <label class="form-label" for="ns-professor">Professor Titular <span style="color:var(--color-text-muted);font-weight:400">(opcional)</span></label>
+                  <select id="ns-professor" class="form-control">
+                    <option value="0">— Nenhum —</option>
+                  </select>
+                </div>
+                <div class="form-group" style="margin:0">
+                  <label class="form-label" for="ns-professor-substituto">Professor Substituto <span style="color:var(--color-text-muted);font-weight:400">(opcional)</span></label>
+                  <select id="ns-professor-substituto" class="form-control">
+                    <option value="0">— Nenhum —</option>
+                  </select>
+                </div>
+                <div class="form-group" style="margin:0">
+                  <label class="form-label" for="ns-descricao">Descrição <span style="color:var(--color-text-muted);font-weight:400">(opcional)</span></label>
+                  <textarea id="ns-descricao" class="form-control" rows="2" maxlength="500" placeholder="Tema ou conteúdo da aula…"></textarea>
+                </div>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button class="btn btn-secondary" id="btnCancelarSessao">Cancelar</button>
+              <button class="btn btn-primary" id="btnSalvarSessao">
+                <svg class="icon" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+                Criar Sessão
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ════════════ MODAL: CONFIRMAR EXCLUSÃO ════════════ -->
+        <div class="modal-overlay" id="modalConfirmarExcluirSessao" style="display:none">
+          <div class="modal" style="max-width:400px">
+            <div class="modal-header">
+              <span class="modal-title">Excluir Sessão</span>
+              <button class="modal-close" onclick="document.getElementById('modalConfirmarExcluirSessao').style.display='none'">&times;</button>
+            </div>
+            <div class="modal-body">
+              <p style="margin:0">Deseja excluir a sessão <strong id="excluir-sessao-nome"></strong>?<br>
+              <small class="text-muted">Todas as respostas e pontuações serão apagadas.</small></p>
+            </div>
+            <div class="modal-footer">
+              <button class="btn btn-secondary" onclick="document.getElementById('modalConfirmarExcluirSessao').style.display='none'">Cancelar</button>
+              <button class="btn btn-danger" id="btnConfirmarExcluirSessao">Excluir</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ════════════ JAVASCRIPT ════════════ -->
+        <script src="libs/js/aula-pratica.js?v=<?php echo filemtime('libs/js/aula-pratica.js'); ?>"></script>
+
+      <?php elseif ($pagina === 'frequencia'): ?>
+        <!-- ══════════════════════════════════════════════ -->
+        <!--  FREQUÊNCIA DE ALUNOS                         -->
+        <!-- ══════════════════════════════════════════════ -->
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Frequência de Alunos</h1>
+            <p class="page-subtitle">Presenças por aula, trimestre e total geral.</p>
+          </div>
+          <div id="freq-export-btns" style="display:none;gap:var(--space-2)">
+            <button class="btn btn-secondary" id="btnFreqXls" title="Exportar como Excel (.xls)">
+              <svg class="icon" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+              Exportar XLS
+            </button>
+            <button class="btn btn-secondary" id="btnFreqPdf">
+              <svg class="icon" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clip-rule="evenodd"/></svg>
+              Exportar PDF
+            </button>
+          </div>
+        </div>
+
+        <!-- Filtros -->
+        <div class="card" style="margin-bottom:var(--space-6)">
+          <div class="card-body" style="display:flex;flex-wrap:wrap;gap:var(--space-4);align-items:flex-end">
+            <div class="form-group" style="margin:0;flex:0 0 100px">
+              <label class="form-label">Ano</label>
+              <select id="freq-ano" class="form-control"></select>
+            </div>
+            <div class="form-group" style="margin:0;flex:1;min-width:180px">
+              <label class="form-label">Turma <span style="color:var(--color-danger)">*</span></label>
+              <select id="freq-turma" class="form-control">
+                <option value="0">— Selecione —</option>
+              </select>
+            </div>
+            <button class="btn btn-primary" id="btnGerarFreq" style="flex-shrink:0">
+              <svg class="icon" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M3 3a1 1 0 011-1h12a1 1 0 011 1v3a1 1 0 01-.293.707L13 10.414V17a1 1 0 01-.553.894l-4-2A1 1 0 018 15v-4.586L3.293 6.707A1 1 0 013 6V3z" clip-rule="evenodd"/></svg>
+              Gerar
+            </button>
+          </div>
+        </div>
+
+        <div id="freq-alert" style="display:none;margin-bottom:var(--space-4)"></div>
+        <div id="freq-loading" style="display:none;text-align:center;padding:var(--space-8)">
+        </div>
+        <script>document.getElementById('freq-loading').innerHTML=skeletonTable(6,5);</script>
+        <div id="freq-container"></div>
+
+        <script src="libs/js/frequencia.js?v=<?php echo filemtime('libs/js/frequencia.js'); ?>"></script>
+
+      <?php elseif ($pagina === 'rel-geral'): ?>
+        <!-- ══════════════════════════════════════════════ -->
+        <!--  RELATÓRIO — FREQUÊNCIA GERAL                 -->
+        <!-- ══════════════════════════════════════════════ -->
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Frequência Geral</h1>
+            <p class="page-subtitle">Comparativo de frequência por turma e trimestre.</p>
+          </div>
+          <div style="display:flex;gap:var(--space-2);align-items:center">
+            <select id="rg-ano" class="form-control" style="width:auto"></select>
+            <button class="btn btn-primary" id="btnRgGerar">
+              <svg class="icon" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M3 3a1 1 0 011-1h12a1 1 0 011 1v3a1 1 0 01-.293.707L13 10.414V17a1 1 0 01-.553.894l-4-2A1 1 0 018 15v-4.586L3.293 6.707A1 1 0 013 6V3z" clip-rule="evenodd"/></svg>
+              Gerar
+            </button>
+            <button class="btn btn-secondary" id="btnRgXls" style="display:none">
+              <svg class="icon" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+              XLS
+            </button>
+            <button class="btn btn-secondary" id="btnRgPdf" style="display:none">
+              <svg class="icon" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clip-rule="evenodd"/></svg>
+              PDF
+            </button>
+          </div>
+        </div>
+        <div id="rg-alert" style="display:none;margin-bottom:var(--space-4)"></div>
+        <div id="rg-loading" style="display:none;padding:var(--space-4)"></div>
+        <script>document.getElementById('rg-loading').innerHTML=skeletonTable(5,5);</script>
+        <div id="rg-container"></div>
+
+        <script src="libs/js/rel-geral.js?v=<?php echo filemtime('libs/js/rel-geral.js'); ?>"></script>
+
+      <?php elseif ($pagina === 'rel-turma'): ?>
+        <!-- ══════════════════════════════════════════════ -->
+        <!--  RELATÓRIO — FREQUÊNCIA POR TURMA             -->
+        <!-- ══════════════════════════════════════════════ -->
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Frequência por Turma</h1>
+            <p class="page-subtitle">Presença de cada aluno, por aula e trimestre.</p>
+          </div>
+        </div>
+        <div class="card" style="margin-bottom:var(--space-6)">
+          <div class="card-body" style="display:flex;flex-wrap:wrap;gap:var(--space-4);align-items:flex-end">
+            <div class="form-group" style="margin:0;flex:0 0 100px">
+              <label class="form-label">Ano</label>
+              <select id="rt-ano" class="form-control"></select>
+            </div>
+            <div class="form-group" style="margin:0;flex:1;min-width:180px">
+              <label class="form-label">Turma <span style="color:var(--color-danger)">*</span></label>
+              <select id="rt-turma" class="form-control"><option value="0">— Selecione —</option></select>
+            </div>
+            <button class="btn btn-primary" id="btnRtGerar" style="flex-shrink:0">
+              <svg class="icon" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M3 3a1 1 0 011-1h12a1 1 0 011 1v3a1 1 0 01-.293.707L13 10.414V17a1 1 0 01-.553.894l-4-2A1 1 0 018 15v-4.586L3.293 6.707A1 1 0 013 6V3z" clip-rule="evenodd"/></svg>
+              Gerar
+            </button>
+            <button class="btn btn-secondary" id="btnRtPdf" style="display:none">PDF</button>
+            <button class="btn btn-secondary" id="btnRtXls" style="display:none">XLS</button>
+          </div>
+        </div>
+        <div id="rt-alert" style="display:none;margin-bottom:var(--space-4)"></div>
+        <div id="rt-loading" style="display:none;padding:var(--space-4)"></div>
+        <script>document.getElementById('rt-loading').innerHTML=skeletonTable(5,5);</script>
+        <div id="rt-container"></div>
+
+        <script src="libs/js/rel-turma.js?v=<?php echo filemtime('libs/js/rel-turma.js'); ?>"></script>
+
+      <?php elseif ($pagina === 'rel-aluno'): ?>
+        <!-- ══════════════════════════════════════════════ -->
+        <!--  RELATÓRIO — FREQUÊNCIA INDIVIDUAL            -->
+        <!-- ══════════════════════════════════════════════ -->
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Frequência Individual</h1>
+            <p class="page-subtitle">Histórico de presença de um único aluno.</p>
+          </div>
+        </div>
+        <div class="card" style="margin-bottom:var(--space-6)">
+          <div class="card-body" style="display:flex;flex-wrap:wrap;gap:var(--space-4);align-items:flex-end">
+            <div class="form-group" style="margin:0;flex:0 0 100px">
+              <label class="form-label">Ano</label>
+              <select id="ra-ano" class="form-control"></select>
+            </div>
+            <div class="form-group" style="margin:0;flex:1;min-width:160px">
+              <label class="form-label">Turma</label>
+              <select id="ra-turma" class="form-control"><option value="0">— Selecione —</option></select>
+            </div>
+            <div class="form-group" style="margin:0;flex:1;min-width:160px">
+              <label class="form-label">Aluno <span style="color:var(--color-danger)">*</span></label>
+              <select id="ra-aluno" class="form-control" disabled><option value="0">— Selecione a turma —</option></select>
+            </div>
+            <button class="btn btn-primary" id="btnRaGerar" style="flex-shrink:0">
+              <svg class="icon" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M3 3a1 1 0 011-1h12a1 1 0 011 1v3a1 1 0 01-.293.707L13 10.414V17a1 1 0 01-.553.894l-4-2A1 1 0 018 15v-4.586L3.293 6.707A1 1 0 013 6V3z" clip-rule="evenodd"/></svg>
+              Gerar
+            </button>
+            <button class="btn btn-secondary" id="btnRaXls" style="display:none">XLS</button>
+            <button class="btn btn-secondary" id="btnRaPdf" style="display:none">PDF</button>
+          </div>
+        </div>
+        <div id="ra-alert" style="display:none;margin-bottom:var(--space-4)"></div>
+        <div id="ra-loading" style="display:none;padding:var(--space-4)"></div>
+        <script>document.getElementById('ra-loading').innerHTML=skeletonTable(4,5);</script>
+        <div id="ra-container"></div>
+
+        <script src="libs/js/rel-aluno.js?v=<?php echo filemtime('libs/js/rel-aluno.js'); ?>"></script>
+
+      <?php elseif ($pagina === 'rel-risco'): ?>
+        <!-- ══════════════════════════════════════════════ -->
+        <!--  RELATÓRIO — ALUNOS EM RISCO                  -->
+        <!-- ══════════════════════════════════════════════ -->
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Alunos em Risco</h1>
+            <p class="page-subtitle">Alunos com frequência abaixo do limiar definido.</p>
+          </div>
+        </div>
+        <div class="card" style="margin-bottom:var(--space-6)">
+          <div class="card-body" style="display:flex;flex-wrap:wrap;gap:var(--space-4);align-items:flex-end">
+            <div class="form-group" style="margin:0;flex:0 0 100px">
+              <label class="form-label">Ano</label>
+              <select id="rr-ano" class="form-control"></select>
+            </div>
+            <div class="form-group" style="margin:0;flex:0 0 155px">
+              <label class="form-label">Trimestre</label>
+              <select id="rr-trimestre" class="form-control">
+                <option value="0">Todos</option>
+                <option value="1">1º Trimestre</option>
+                <option value="2">2º Trimestre</option>
+                <option value="3">3º Trimestre</option>
+                <option value="4">4º Trimestre</option>
+              </select>
+            </div>
+            <div class="form-group" style="margin:0;flex:1;min-width:160px">
+              <label class="form-label">Turma</label>
+              <select id="rr-turma" class="form-control"><option value="0">Todas</option></select>
+            </div>
+            <div class="form-group" style="margin:0;flex:0 0 130px">
+              <label class="form-label">Limiar (%)</label>
+              <input type="number" id="rr-limiar" class="form-control" value="75" min="1" max="100">
+            </div>
+            <button class="btn btn-primary" id="btnRrGerar" style="flex-shrink:0">
+              <svg class="icon" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M3 3a1 1 0 011-1h12a1 1 0 011 1v3a1 1 0 01-.293.707L13 10.414V17a1 1 0 01-.553.894l-4-2A1 1 0 018 15v-4.586L3.293 6.707A1 1 0 013 6V3z" clip-rule="evenodd"/></svg>
+              Gerar
+            </button>
+            <button class="btn btn-secondary" id="btnRrXls" style="display:none">XLS</button>
+            <button class="btn btn-secondary" id="btnRrPdf" style="display:none">PDF</button>
+          </div>
+        </div>
+        <div id="rr-alert" style="display:none;margin-bottom:var(--space-4)"></div>
+        <div id="rr-loading" style="display:none;padding:var(--space-4)"></div>
+        <script>document.getElementById('rr-loading').innerHTML=skeletonTable(5,5);</script>
+        <div id="rr-container"></div>
+
+        <script src="libs/js/rel-risco.js?v=<?php echo filemtime('libs/js/rel-risco.js'); ?>"></script>
+
+      <?php elseif ($pagina === 'certificados'): ?>
+        <!-- ══════════════════════════════════════════════ -->
+        <!--  CERTIFICADOS                                  -->
+        <!-- ══════════════════════════════════════════════ -->
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Certificados</h1>
+            <p class="page-subtitle">Emita certificados trimestrais ou anuais com desempenho, presença e pontuação.</p>
+          </div>
+        </div>
+
+        <div class="card" style="margin-bottom:var(--space-5)">
+          <div class="card-header"><span class="card-title">Filtros</span></div>
+          <div class="card-body" style="display:flex;flex-wrap:wrap;gap:var(--space-3);align-items:flex-end">
+            <div class="form-group" style="margin:0;flex:1 1 150px">
+              <label class="form-label">Turma</label>
+              <select id="cert-turma" class="form-control"><option value="">Carregando…</option></select>
+            </div>
+            <div class="form-group" style="margin:0;flex:0 0 120px">
+              <label class="form-label">Ano</label>
+              <select id="cert-ano" class="form-control"><option value="">Carregando…</option></select>
+            </div>
+            <div class="form-group" style="margin:0;flex:0 0 160px">
+              <label class="form-label">Tipo</label>
+              <select id="cert-tipo" class="form-control">
+                <option value="anual">Anual</option>
+                <option value="trimestral">Trimestral</option>
+              </select>
+            </div>
+            <div class="form-group" style="margin:0;flex:0 0 160px;display:none" id="cert-tri-wrap">
+              <label class="form-label">Trimestre</label>
+              <select id="cert-trimestre" class="form-control">
+                <option value="1">1º Trimestre</option>
+                <option value="2">2º Trimestre</option>
+                <option value="3">3º Trimestre</option>
+                <option value="4">4º Trimestre</option>
+              </select>
+            </div>
+            <button class="btn btn-primary" id="btnCertGerar" style="flex-shrink:0">
+              <svg class="icon" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M3 3a1 1 0 011-1h12a1 1 0 011 1v3a1 1 0 01-.293.707L13 10.414V17a1 1 0 01-.553.894l-4-2A1 1 0 018 15v-4.586L3.293 6.707A1 1 0 013 6V3z" clip-rule="evenodd"/></svg>
+              Consultar
+            </button>
+          </div>
+        </div>
+
+        <div id="cert-alert" style="display:none;margin-bottom:var(--space-4)"></div>
+        <div id="cert-loading" style="display:none;padding:var(--space-4)"></div>
+        <script>document.getElementById('cert-loading').innerHTML=skeletonTable(6,5);</script>
+        <div id="cert-container"></div>
+
+        <!-- Modal de impressão do certificado -->
+        <div id="cert-modal" class="modal-overlay" style="display:none">
+          <div class="modal" style="max-width:850px;padding:0;background:transparent;box-shadow:none;overflow:visible">
+            <div id="cert-print-area"></div>
+            <div style="display:flex;gap:var(--space-3);justify-content:center;padding:var(--space-4)">
+              <button class="btn btn-primary" id="btnCertPrint">
+                <svg class="icon" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M5 4v3H4a2 2 0 00-2 2v3a2 2 0 002 2h1v2a2 2 0 002 2h6a2 2 0 002-2v-2h1a2 2 0 002-2V9a2 2 0 00-2-2h-1V4a2 2 0 00-2-2H7a2 2 0 00-2 2zm8 0H7v3h6V4zm0 8H7v4h6v-4z" clip-rule="evenodd"/></svg>
+                Imprimir
+              </button>
+              <button class="btn btn-secondary" id="btnCertFechar">Fechar</button>
+            </div>
+          </div>
+        </div>
+
+        <script src="libs/js/certificados.js?v=<?php echo filemtime('libs/js/certificados.js'); ?>"></script>
+
+      <?php elseif ($pagina === 'biblia'): ?>
+        <!-- ══════════════════════════════════════════════ -->
+        <!--  BÍBLIA DIGITAL                               -->
+        <!-- ══════════════════════════════════════════════ -->
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Bíblia Digital</h1>
+            <p class="page-subtitle">Consulte qualquer versículo da Bíblia Sagrada (Almeida) rapidamente.</p>
+          </div>
+        </div>
+        <div class="card" style="max-width:600px;margin-bottom:var(--space-5)">
+          <div class="card-header"><span class="card-title">Navegação</span></div>
+          <div class="card-body" style="display:flex;flex-wrap:wrap;gap:var(--space-3);align-items:flex-end">
+            <div class="form-group" style="flex:1 1 180px">
+              <label class="form-label">Livro</label>
+              <select id="biblia-livro" class="form-control"></select>
+            </div>
+            <div class="form-group" style="flex:0 0 100px">
+              <label class="form-label">Capítulo</label>
+              <select id="biblia-capitulo" class="form-control"></select>
+            </div>
+            <div class="form-group" style="flex:0 0 100px">
+              <label class="form-label">Versículo</label>
+              <select id="biblia-versiculo" class="form-control"></select>
+            </div>
+            <button class="btn btn-primary" id="btnBuscarBiblia">Buscar</button>
+          </div>
+        </div>
+        <div id="biblia-alert" style="display:none;margin-bottom:var(--space-4)"></div>
+        <div id="biblia-resultado" class="card" style="display:none;max-width:600px"></div>
+
+        <script src="libs/js/biblia.js?v=<?php echo time(); ?>"></script>
+
+      <?php elseif ($pagina === 'vendas'): ?>
+        <!-- ══════════════════════════════════════════════ -->
+        <!--  VENDAS DE REVISTAS                            -->
+        <!-- ══════════════════════════════════════════════ -->
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Vendas de Revistas</h1>
+            <p class="page-subtitle">Registre vendas, acompanhe pagamentos e gerencie débitos.</p>
+          </div>
+          <button class="btn btn-primary" id="btnNovaVenda">
+            <svg class="icon" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd"/></svg>
+            Nova Venda
+          </button>
+        </div>
+
+        <!-- Dashboard cards -->
+        <div class="stats-grid" style="margin-bottom:var(--space-5)">
+          <div class="stat-card">
+            <div class="stat-card__icon icon-bg-blue">
+              <svg style="width:22px;height:22px;fill:currentColor" viewBox="0 0 20 20"><path d="M4 4a2 2 0 00-2 2v1h16V6a2 2 0 00-2-2H4zM18 9H2v5a2 2 0 002 2h12a2 2 0 002-2V9zM4 13a1 1 0 011-1h1a1 1 0 110 2H5a1 1 0 01-1-1zm5-1a1 1 0 100 2h1a1 1 0 100-2H9z"/></svg>
+            </div>
+            <div>
+              <div class="stat-card__value" id="vd-total-vendas">—</div>
+              <div class="stat-card__label">Total Vendido</div>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card__icon icon-bg-green">
+              <svg style="width:22px;height:22px;fill:currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>
+            </div>
+            <div>
+              <div class="stat-card__value" id="vd-total-pago">—</div>
+              <div class="stat-card__label">Total Pago</div>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card__icon icon-bg-orange">
+              <svg style="width:22px;height:22px;fill:currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+            </div>
+            <div>
+              <div class="stat-card__value" id="vd-total-debito">—</div>
+              <div class="stat-card__label">Total em Débito</div>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card__icon icon-bg-purple">
+              <svg style="width:22px;height:22px;fill:currentColor" viewBox="0 0 20 20"><path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z"/><path fill-rule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clip-rule="evenodd"/></svg>
+            </div>
+            <div>
+              <div class="stat-card__value" id="vd-qtd-revistas">—</div>
+              <div class="stat-card__label">Revistas Vendidas</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Dash de Pizza -->
+        <div class="card" style="max-width:420px;margin-bottom:var(--space-4)">
+          <div class="card-header"><span class="card-title">Situação dos Pagamentos</span></div>
+          <div class="card-body" style="display:flex;justify-content:center;align-items:center">
+            <canvas id="vd-pizza" width="180" height="180"></canvas>
+          </div>
+        </div>
+
+        <!-- Abas -->
+        <div class="vd-tabs" style="margin-bottom:var(--space-4)">
+          <button class="vd-tab active" data-vd-tab="historico">Histórico de Vendas</button>
+          <button class="vd-tab" data-vd-tab="devedores">Em débito</button>
+        </div>
+
+        <!-- Filtros do histórico -->
+        <div class="card" id="vd-filtros-card" style="margin-bottom:var(--space-5)">
+          <div class="card-header"><span class="card-title">Filtros</span></div>
+          <div class="card-body" style="display:flex;flex-wrap:wrap;gap:var(--space-3);align-items:flex-end">
+            <div class="form-group" style="margin:0;flex:0 0 120px">
+              <label class="form-label">Ano</label>
+              <select id="vd-ano" class="form-control"><option value="">Carregando…</option></select>
+            </div>
+            <div class="form-group" style="margin:0;flex:0 0 160px">
+              <label class="form-label">Trimestre</label>
+              <select id="vd-trimestre" class="form-control">
+                <option value="">Todos</option>
+                <option value="1">1º Trimestre</option>
+                <option value="2">2º Trimestre</option>
+                <option value="3">3º Trimestre</option>
+                <option value="4">4º Trimestre</option>
+              </select>
+            </div>
+            <div class="form-group" style="margin:0;flex:0 0 140px">
+              <label class="form-label">Status</label>
+              <select id="vd-status" class="form-control">
+                <option value="">Todos</option>
+                <option value="pago">Pago</option>
+                <option value="fiado">Fiado</option>
+              </select>
+            </div>
+            <button class="btn btn-primary" id="btnVdFiltrar" style="flex-shrink:0">
+              <svg class="icon" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M3 3a1 1 0 011-1h12a1 1 0 011 1v3a1 1 0 01-.293.707L13 10.414V17a1 1 0 01-.553.894l-4-2A1 1 0 018 15v-4.586L3.293 6.707A1 1 0 013 6V3z" clip-rule="evenodd"/></svg>
+              Filtrar
+            </button>
+          </div>
+        </div>
+
+        <div id="vd-alert" style="display:none;margin-bottom:var(--space-4)"></div>
+        <div id="vd-loading" style="display:none;padding:var(--space-4)"></div>
+        <script>document.getElementById('vd-loading').innerHTML=skeletonTable(7,5);</script>
+        <div id="vd-container"></div>
+
+        <!-- Modal Nova Venda -->
+        <div id="vd-modal" class="modal-overlay" style="display:none">
+          <div class="modal">
+            <div class="modal-header">
+              <h3 class="modal-title">Nova Venda de Revista</h3>
+              <button class="modal-close" id="btnVdFecharModal">&times;</button>
+            </div>
+            <div class="modal-body">
+              <div id="vd-modal-alert" style="display:none;margin-bottom:var(--space-3)"></div>
+              <div class="form-group">
+                <label class="form-label">Pessoa (Aluno/Professor)</label>
+                <select id="vd-pessoa" class="form-control"><option value="">Carregando…</option></select>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Tipo de Revista</label>
+                <select id="vd-tipo-revista" class="form-control">
+                  <option value="aluno">Revista do Aluno — R$ 10,00</option>
+                  <option value="professor">Revista do Professor — R$ 15,00</option>
+                </select>
+              </div>
+              <div style="display:flex;gap:var(--space-3)">
+                <div class="form-group" style="flex:1">
+                  <label class="form-label">Trimestre</label>
+                  <select id="vd-modal-tri" class="form-control">
+                    <option value="1">1º Trimestre</option>
+                    <option value="2">2º Trimestre</option>
+                    <option value="3">3º Trimestre</option>
+                    <option value="4">4º Trimestre</option>
+                  </select>
+                </div>
+                <div class="form-group" style="flex:1">
+                  <label class="form-label">Ano</label>
+                  <select id="vd-modal-ano" class="form-control"></select>
+                </div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Forma de Pagamento</label>
+                <select id="vd-forma" class="form-control">
+                  <option value="dinheiro">Dinheiro</option>
+                  <option value="pix">Pix</option>
+                  <option value="cartao">Cartão</option>
+                  <option value="transferencia">Transferência</option>
+                </select>
+              </div>
+              <div class="form-group" style="margin-bottom:0">
+                <label style="display:flex;align-items:center;gap:var(--space-2);cursor:pointer">
+                  <input type="checkbox" id="vd-fiado">
+                  <span style="font-size:var(--text-sm);font-weight:500">Fiado (pagar depois)</span>
+                </label>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Observação <span style="font-weight:400;color:var(--color-text-muted)">(opcional)</span></label>
+                <input type="text" id="vd-obs" class="form-control" maxlength="255" placeholder="Ex: Vai pagar no próximo domingo">
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button class="btn btn-secondary" id="btnVdCancelar">Cancelar</button>
+              <button class="btn btn-primary" id="btnVdSalvar">
+                <svg class="icon" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+                Registrar Venda
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Modal Quitar -->
+        <div id="vd-modal-quitar" class="modal-overlay" style="display:none">
+          <div class="modal" style="max-width:400px">
+            <div class="modal-header">
+              <h3 class="modal-title">Registrar Pagamento</h3>
+              <button class="modal-close" id="btnVdFecharQuitar">&times;</button>
+            </div>
+            <div class="modal-body">
+              <p id="vd-quitar-info" style="margin:0 0 var(--space-3)"></p>
+              <div class="form-group" style="margin-bottom:0">
+                <label class="form-label">Forma de Pagamento</label>
+                <select id="vd-quitar-forma" class="form-control">
+                  <option value="dinheiro">Dinheiro</option>
+                  <option value="pix">Pix</option>
+                  <option value="cartao">Cartão</option>
+                  <option value="transferencia">Transferência</option>
+                </select>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button class="btn btn-secondary" id="btnVdCancelarQuitar">Cancelar</button>
+              <button class="btn btn-primary" id="btnVdConfirmarQuitar">Confirmar Pagamento</button>
+            </div>
+          </div>
+        </div>
+
+        <script src="libs/chart.min.js?v=<?php echo filemtime('libs/chart.min.js'); ?>"></script>
+        <script src="libs/js/vendas.js?v=<?php echo filemtime('libs/js/vendas.js'); ?>"></script>
+
       <?php elseif ($pagina === 'configuracoes'): ?>
         <!-- ══════════════════════════════════════════════ -->
         <!--  CONFIGURAÇÕES                                 -->
@@ -2499,9 +3467,11 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
           'aula-nova'      => 'Nova Aula',
           'frequencia'     => 'Frequência',
           'calendario'     => 'Calendário',
+          'aula-pratica'   => 'Aula na Prática',
           'rel-geral'      => 'Relatório — Frequência Geral',
-          'rel-turma'      => 'Relatório por Turma',
-          'rel-aluno'      => 'Relatório por Aluno',
+          'rel-turma'      => 'Relatório — Frequência por Turma',
+          'rel-aluno'      => 'Relatório — Frequência Individual',
+          'rel-risco'      => 'Relatório — Alunos em Risco',
           'configuracoes'  => 'Configurações',
         ];
         $titulo = $titulos[$pagina] ?? 'Página';
@@ -2528,2275 +3498,32 @@ $pagina  = isset($_GET['pagina']) ? htmlspecialchars($_GET['pagina'], ENT_QUOTES
   </div><!-- /main-content -->
 
 
-  <script>
-    // ── Sidebar accordion ──────────────────────────────
-    document.querySelectorAll('[data-group]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const group = btn.closest('.sidebar__group');
-        const isOpen = group.classList.contains('open');
-
-        // Fecha todos
-        document.querySelectorAll('.sidebar__group').forEach(g => g.classList.remove('open'));
-
-        // Abre o clicado (toggle)
-        if (!isOpen) group.classList.add('open');
-      });
-    });
-
-    // ── Título do header dinâmico ──────────────────────
-    const titulos = {
-      dashboard: 'Dashboard',
-      alunos: 'Listar Alunos',
-      'aluno-novo': 'Cadastrar Aluno',
-      'aluno-editar': 'Editar Aluno',
-      turmas: 'Turmas',
-      'turma-nova': 'Nova Turma',
-      'turma-editar': 'Editar Turma',
-      professores: 'Listar Professores',
-      'professor-novo': 'Cadastrar Professor',
-      aulas: 'Temas de Aulas',
-      cronograma: 'Cronograma de Aulas',
-      'tema-novo': 'Novo Tema',
-      'tema-editar': 'Editar Tema',
-      'tema-detalhe': 'Detalhes do Tema',
-      'aula-nova': 'Nova Aula',
-      frequencia: 'Frequência',
-      calendario: 'Calendário',
-      'rel-geral': 'Frequência Geral',
-      'rel-turma': 'Relatório por Turma',
-      'rel-aluno': 'Relatório por Aluno',
-      configuracoes: 'Configurações',
-    };
-
-    const params = new URLSearchParams(window.location.search);
-    const current = params.get('pagina') || 'dashboard';
-    const titleEl = document.getElementById('pageTitle');
-    if (titleEl && titulos[current]) titleEl.textContent = titulos[current];
-
-    // ── Mobile: hambúrguer ─────────────────────────────
-    const sidebar = document.getElementById('sidebar');
-    const overlay = document.getElementById('sidebarOverlay');
-    const hamburgerBtn = document.getElementById('hamburgerBtn');
-
-    function openSidebar() {
-      sidebar.classList.add('is-open');
-      overlay.classList.add('visible');
-    }
-
-    function closeSidebar() {
-      sidebar.classList.remove('is-open');
-      overlay.classList.remove('visible');
-    }
-
-    hamburgerBtn.addEventListener('click', () => {
-      sidebar.classList.contains('is-open') ? closeSidebar() : openSidebar();
-    });
-    overlay.addEventListener('click', closeSidebar);
-
-    // ════════════════════════════════════════════════
-    //  LISTAGEM DE ALUNOS
-    // ════════════════════════════════════════════════
-    (function() {
-      if (!document.getElementById('tabela-alunos')) return;
-
-      const tbody = document.getElementById('tbody-alunos');
-      const totalEl = document.getElementById('total-alunos');
-      const listaAlert = document.getElementById('lista-alert');
-      let excluirId = null;
-
-      function showListAlert(msg, tipo) {
-        listaAlert.innerHTML = '<div class="alert alert-' + tipo + '"><span>' + msg + '</span></div>';
-        listaAlert.style.display = 'block';
-        setTimeout(() => {
-          listaAlert.style.display = 'none';
-        }, 4000);
-      }
-
-      function fmtData(s) {
-        if (!s) return '—';
-        const [y, m, d] = s.split('-');
-        return d + '/' + m + '/' + y;
-      }
-
-      function badgeStatus(s) {
-        const map = {
-          ativo: 'success',
-          pendente: 'warning',
-          inativo: 'danger'
-        };
-        const label = {
-          ativo: 'Ativo',
-          pendente: 'Pendente',
-          inativo: 'Inativo'
-        };
-        return '<span class="badge badge-' + (map[s] || 'primary') + '">' + (label[s] || s) + '</span>';
-      }
-
-      function renderTabela(alunos) {
-        if (!alunos.length) {
-          tbody.innerHTML = '<tr><td colspan="8" class="text-center" style="padding:var(--space-10);color:var(--color-gray-400)">Nenhum aluno encontrado.</td></tr>';
-          return;
-        }
-        tbody.innerHTML = alunos.map(a => {
-          const initials = escHtml(a.nome).trim().split(/\s+/).map(w => w[0]).slice(0,2).join('').toUpperCase();
-          const avatarHtml = a.foto
-            ? `<img src="${escHtml(a.foto)}" alt="" style="width:36px;height:36px;border-radius:50%;object-fit:cover;display:block">`
-            : `<div style="width:36px;height:36px;border-radius:50%;background:var(--color-primary);color:#fff;display:flex;align-items:center;justify-content:center;font-size:var(--text-xs);font-weight:600;flex-shrink:0">${initials}</div>`;
-          return `
-        <tr>
-          <td style="color:var(--color-gray-400);font-size:var(--text-xs)">${a.id}</td>
-          <td>${avatarHtml}</td>
-          <td><strong>${escHtml(a.nome)}</strong><br><small class="text-muted">${escHtml(a.usuario_email || '')}</small></td>
-          <td>${escHtml(a.turma || '—')}</td>
-          <td>${fmtTel(a.telefone)}</td>
-          <td>${fmtData(a.data_matricula)}</td>
-          <td>${badgeStatus(a.status)}</td>
-          <td style="text-align:right;white-space:nowrap">
-            <a href="index.php?pagina=aluno-editar&id=${a.id}" class="btn btn-ghost btn-sm" title="Editar">
-              <svg class="icon" viewBox="0 0 20 20"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"/></svg>
-            </a>
-            <button class="btn btn-ghost btn-sm" style="color:var(--color-danger)" title="Excluir" onclick="abrirModalExcluir(${a.id}, '${escHtml(a.nome).replace(/'/g,"\\'")}')">
-              <svg class="icon" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
-            </button>
-          </td>
-        </tr>`;
-        }).join('');
-      }
-
-      function fmtTel(n) {
-        if (!n) return '—';
-        const s = String(n).replace(/\D/g, '');
-        if (s.length === 11) return '(' + s.slice(0, 2) + ') ' + s.slice(2, 7) + '-' + s.slice(7);
-        if (s.length === 10) return '(' + s.slice(0, 2) + ') ' + s.slice(2, 6) + '-' + s.slice(6);
-        return s;
-      }
-
-      function escHtml(s) {
-        return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-      }
-
-      function carregarAlunos() {
-        const busca = document.getElementById('filtro-busca').value.trim();
-        const status = document.getElementById('filtro-status').value;
-        const turma = document.getElementById('filtro-turma').value;
-
-        tbody.innerHTML = '<tr><td colspan="8" class="text-center" style="padding:var(--space-6);color:var(--color-gray-400)">Carregando…</td></tr>';
-
-        const params = new URLSearchParams({
-          busca,
-          status,
-          turma
-        });
-        fetch('alunos_crud.php?' + params)
-          .then(r => r.json())
-          .then(data => {
-            if (!data.ok) {
-              showListAlert(data.msg || 'Erro ao carregar.', 'danger');
-              return;
-            }
-            totalEl.textContent = data.total + ' aluno' + (data.total !== 1 ? 's' : '');
-            renderTabela(data.alunos);
-          })
-          .catch(() => showListAlert('Falha na comunicação com o servidor.', 'danger'));
-      }
-
-      // Modal exclusão
-      window.abrirModalExcluir = function(id, nome) {
-        excluirId = id;
-        document.getElementById('modal-nome-aluno').textContent = nome;
-        document.getElementById('modalExcluir').style.display = 'flex';
-      };
-
-      document.getElementById('btnConfirmarExcluir').addEventListener('click', function() {
-        if (!excluirId) return;
-        this.disabled = true;
-        this.textContent = 'Excluindo…';
-        fetch('alunos_crud.php?id=' + excluirId, {
-            method: 'DELETE'
-          })
-          .then(r => r.json())
-          .then(data => {
-            document.getElementById('modalExcluir').style.display = 'none';
-            showListAlert(data.msg || (data.ok ? 'Excluído.' : 'Erro.'), data.ok ? 'success' : 'danger');
-            if (data.ok) carregarAlunos();
-          })
-          .catch(() => showListAlert('Falha ao excluir.', 'danger'))
-          .finally(() => {
-            this.disabled = false;
-            this.innerHTML = '<svg class="icon" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"/></svg> Excluir';
-            excluirId = null;
-          });
-      });
-
-      document.getElementById('btnFiltrar').addEventListener('click', carregarAlunos);
-      document.getElementById('filtro-busca').addEventListener('keydown', e => {
-        if (e.key === 'Enter') carregarAlunos();
-      });
-
-      // Carga inicial
-      carregarAlunos();
-    })();
-
-    // ════════════════════════════════════════════════
-    //  LISTAGEM DE PROFESSORES
-    // ════════════════════════════════════════════════
-    (function() {
-      if (!document.getElementById('tabela-professores')) return;
-
-      const tbody    = document.getElementById('tbody-professores');
-      const totalEl  = document.getElementById('total-professores');
-      const alertEl  = document.getElementById('lista-prof-alert');
-      let excluirId  = null;
-
-      function showAlert(msg, tipo) {
-        alertEl.innerHTML = '<div class="alert alert-' + tipo + '"><span>' + msg + '</span></div>';
-        alertEl.style.display = 'block';
-        setTimeout(() => alertEl.style.display = 'none', 4000);
-      }
-
-      function fmtData(s) {
-        if (!s) return '—';
-        const [y, m, d] = s.split('-');
-        return d + '/' + m + '/' + y;
-      }
-
-      function badgeStatus(s) {
-        const map   = { ativo: 'success', pendente: 'warning', inativo: 'danger' };
-        const label = { ativo: 'Ativo',   pendente: 'Pendente', inativo: 'Inativo' };
-        return '<span class="badge badge-' + (map[s] || 'primary') + '">' + (label[s] || s) + '</span>';
-      }
-
-      function escH(s) {
-        return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-      }
-
-      function fmtTel(n) {
-        if (!n) return '—';
-        const s = String(n).replace(/\D/g, '');
-        if (s.length === 11) return '(' + s.slice(0,2) + ') ' + s.slice(2,7) + '-' + s.slice(7);
-        if (s.length === 10) return '(' + s.slice(0,2) + ') ' + s.slice(2,6) + '-' + s.slice(6);
-        return s;
-      }
-
-      function renderTabela(professores) {
-        if (!professores.length) {
-          tbody.innerHTML = '<tr><td colspan="8" class="text-center" style="padding:var(--space-10);color:var(--color-gray-400)">Nenhum professor encontrado.</td></tr>';
-          return;
-        }
-        tbody.innerHTML = professores.map(a => {
-          const initials = escH(a.nome).trim().split(/\s+/).map(w => w[0]).slice(0,2).join('').toUpperCase();
-          const avatar = a.foto
-            ? `<img src="${escH(a.foto)}" alt="" style="width:36px;height:36px;border-radius:50%;object-fit:cover;display:block">`
-            : `<div style="width:36px;height:36px;border-radius:50%;background:var(--color-primary);color:#fff;display:flex;align-items:center;justify-content:center;font-size:var(--text-xs);font-weight:600">${initials}</div>`;
-          return `<tr>
-            <td style="color:var(--color-gray-400);font-size:var(--text-xs)">${a.id}</td>
-            <td>${avatar}</td>
-            <td><strong>${escH(a.nome)}</strong><br><small class="text-muted">${escH(a.usuario_email || '')}</small></td>
-            <td>${escH(a.turma || '—')}</td>
-            <td>${fmtTel(a.telefone)}</td>
-            <td>${fmtData(a.data_matricula)}</td>
-            <td>${badgeStatus(a.status)}</td>
-            <td style="text-align:right;white-space:nowrap">
-              <a href="index.php?pagina=professor-editar&id=${a.id}" class="btn btn-ghost btn-sm" title="Editar">
-                <svg class="icon" viewBox="0 0 20 20"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"/></svg>
-              </a>
-              <button class="btn btn-ghost btn-sm" style="color:var(--color-danger)" title="Excluir"
-                onclick="abrirModalExcluirProf(${a.id}, '${escH(a.nome).replace(/'/g,"\\'")}')">
-                <svg class="icon" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
-              </button>
-            </td>
-          </tr>`;
-        }).join('');
-      }
-
-      function carregarProfessores() {
-        const busca  = document.getElementById('filtro-prof-busca').value.trim();
-        const status = document.getElementById('filtro-prof-status').value;
-        const turma  = document.getElementById('filtro-prof-turma').value;
-        tbody.innerHTML = '<tr><td colspan="8" class="text-center" style="padding:var(--space-6);color:var(--color-gray-400)">Carregando…</td></tr>';
-        fetch('alunos_crud.php?' + new URLSearchParams({ busca, status, turma, docente: 'S' }))
-          .then(r => r.json())
-          .then(data => {
-            if (!data.ok) { showAlert(data.msg || 'Erro ao carregar.', 'danger'); return; }
-            totalEl.textContent = data.total + ' professor' + (data.total !== 1 ? 'es' : '');
-            renderTabela(data.alunos);
-          })
-          .catch(() => showAlert('Falha na comunicação com o servidor.', 'danger'));
-      }
-
-      window.abrirModalExcluirProf = function(id, nome) {
-        excluirId = id;
-        document.getElementById('modal-nome-prof').textContent = nome;
-        document.getElementById('modalExcluirProf').style.display = 'flex';
-      };
-
-      document.getElementById('btnConfirmarExcluirProf').addEventListener('click', function() {
-        if (!excluirId) return;
-        this.disabled = true;
-        this.textContent = 'Excluindo…';
-        fetch('alunos_crud.php?id=' + excluirId, { method: 'DELETE' })
-          .then(r => r.json())
-          .then(data => {
-            document.getElementById('modalExcluirProf').style.display = 'none';
-            showAlert(data.msg || (data.ok ? 'Excluído.' : 'Erro.'), data.ok ? 'success' : 'danger');
-            if (data.ok) carregarProfessores();
-          })
-          .catch(() => showAlert('Falha ao excluir.', 'danger'))
-          .finally(() => {
-            this.disabled = false;
-            this.innerHTML = '<svg class="icon" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"/></svg> Excluir';
-            excluirId = null;
-          });
-      });
-
-      document.getElementById('btnFiltrarProf').addEventListener('click', carregarProfessores);
-      document.getElementById('filtro-prof-busca').addEventListener('keydown', e => {
-        if (e.key === 'Enter') carregarProfessores();
-      });
-
-      carregarProfessores();
-    })();
-
-    // ════════════════════════════════════════════════
-    //  FORMULÁRIO DE ALUNO (criar / editar)
-    // ════════════════════════════════════════════════
-    (function() {
-      const form = document.getElementById('formAluno');
-      if (!form) return;
-
-      const modo = form.dataset.modo || 'criar';
-      const alunoId = parseInt(form.dataset.id || '0', 10);
-
-      // ── Pré-preenche data de matrícula com hoje (só no criar) ──
-      const dtMatricula = document.getElementById('data_matricula');
-      if (modo === 'criar' && dtMatricula) dtMatricula.value = new Date().toISOString().split('T')[0];
-
-      // ── Carrega dados se for editar ──────────────────
-      if (modo === 'editar' && alunoId) {
-        fetch('alunos_crud.php?id=' + alunoId)
-          .then(r => r.json())
-          .then(data => {
-            if (!data.ok) {
-              showAlert(data.msg || 'Aluno não encontrado.', 'danger');
-              return;
-            }
-            const a = data.aluno;
-            setValue('nome', a.nome);
-            setValue('sexo', a.sexo);
-            setValue('estado_civil', a.estado_civil);
-            setValue('data_nascimento', a.data_nascimento);
-            setValue('profissao', a.profissao);
-            const cpfFmt = a.cpf ? fmtCpf(String(a.cpf).padStart(11, '0')) : '';
-            setValue('cpf', cpfFmt);
-            const telFmt = a.telefone ? fmtTelForm(String(a.telefone)) : '';
-            setValue('telefone', telFmt);
-            setValue('email', a.usuario_email);
-            const cepFmt = a.cep ? fmtCepForm(String(a.cep).padStart(8, '0')) : '';
-            setValue('cep', cepFmt);
-            setValue('logradouro', a.logradouro);
-            setValue('numero', a.numero_endereco);
-            setValue('complemento', a.complemento_endereco);
-            setValue('bairro', a.bairro);
-            setValue('cidade', a.cidade);
-            setValue('estado', a.UF);
-            setValue('turma', a.turma);
-            setValue('data_matricula', a.data_matricula);
-            setValue('status', a.status);
-            setValue('docente', a.docente || 'N');
-            setValue('observacoes', a.observacoes);
-            const obsEl = document.getElementById('obs-count');
-            if (obsEl) obsEl.textContent = (a.observacoes || '').length;
-            // Exibe foto existente no preview
-            if (a.foto) mostrarFoto(a.foto);
-          })
-          .catch(() => showAlert('Erro ao carregar dados do aluno.', 'danger'));
-      }
-
-      function setValue(id, val) {
-        const el = document.getElementById(id);
-        if (!el || val === null || val === undefined) return;
-        el.value = val;
-      }
-
-      function fmtCpf(s) {
-        s = s.replace(/\D/g, '').slice(0, 11);
-        if (s.length === 11) return s.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
-        return s;
-      }
-
-      function fmtTelForm(s) {
-        s = s.replace(/\D/g, '');
-        if (s.length === 11) return '(' + s.slice(0, 2) + ') ' + s.slice(2, 7) + '-' + s.slice(7);
-        if (s.length === 10) return '(' + s.slice(0, 2) + ') ' + s.slice(2, 6) + '-' + s.slice(6);
-        return s;
-      }
-
-      function fmtCepForm(s) {
-        s = s.replace(/\D/g, '').slice(0, 8);
-        if (s.length === 8) return s.slice(0, 5) + '-' + s.slice(5);
-        return s;
-      }
-
-      // ── Máscaras ─────────────────────────────────────
-      const cpfEl = document.getElementById('cpf');
-      if (cpfEl) cpfEl.addEventListener('input', function() {
-        let v = this.value.replace(/\D/g, '').slice(0, 11);
-        if (v.length > 9) v = v.replace(/(\d{3})(\d{3})(\d{3})(\d{0,2})/, '$1.$2.$3-$4');
-        else if (v.length > 6) v = v.replace(/(\d{3})(\d{3})(\d{0,3})/, '$1.$2.$3');
-        else if (v.length > 3) v = v.replace(/(\d{3})(\d{0,3})/, '$1.$2');
-        this.value = v;
-      });
-
-      function maskPhone(id) {
-        const el = document.getElementById(id);
-        if (!el) return;
-        el.addEventListener('input', function() {
-          let v = this.value.replace(/\D/g, '').slice(0, 11);
-          if (v.length > 10) v = v.replace(/(\d{2})(\d{5})(\d{4})/, '($1) $2-$3');
-          else if (v.length > 6) v = v.replace(/(\d{2})(\d{4,5})(\d{0,4})/, '($1) $2-$3');
-          else if (v.length > 2) v = v.replace(/(\d{2})(\d{0,5})/, '($1) $2');
-          this.value = v;
-        });
-      }
-      maskPhone('telefone');
-      maskPhone('resp_telefone');
-
-      const cepInput = document.getElementById('cep');
-      const cepSpinner = document.getElementById('cep-spinner');
-      const cepError = document.getElementById('cep-error');
-      if (cepInput) {
-        cepInput.addEventListener('input', function() {
-          let v = this.value.replace(/\D/g, '').slice(0, 8);
-          if (v.length > 5) v = v.replace(/(\d{5})(\d{0,3})/, '$1-$2');
-          this.value = v;
-          if (v.replace('-', '').length === 8) buscarCep(v.replace('-', ''));
-        });
-      }
-
-      function buscarCep(cep) {
-        if (cepSpinner) cepSpinner.style.display = 'inline';
-        if (cepError) cepError.textContent = '';
-        fetch('https://viacep.com.br/ws/' + encodeURIComponent(cep) + '/json/')
-          .then(r => {
-            if (!r.ok) throw new Error();
-            return r.json();
-          })
-          .then(data => {
-            if (data.erro) {
-              if (cepError) cepError.textContent = 'CEP não encontrado.';
-              return;
-            }
-            setValue('logradouro', data.logradouro || '');
-            setValue('bairro', data.bairro || '');
-            setValue('cidade', data.localidade || '');
-            setValue('estado', data.uf || '');
-            const numEl = document.getElementById('numero');
-            if (numEl) numEl.focus();
-          })
-          .catch(() => {
-            if (cepError) cepError.textContent = 'Não foi possível consultar o CEP.';
-          })
-          .finally(() => {
-            if (cepSpinner) cepSpinner.style.display = 'none';
-          });
-      }
-
-      // Contador observações
-      const obsTextarea = document.getElementById('observacoes');
-      const obsCount = document.getElementById('obs-count');
-      if (obsTextarea && obsCount) {
-        obsTextarea.addEventListener('input', function() {
-          obsCount.textContent = this.value.length;
-        });
-      }
-
-      // ── Helpers alert/error ───────────────────────────
-      function showAlert(msg, tipo) {
-        const el = document.getElementById('aluno-alert');
-        if (!el) return;
-        el.innerHTML = '<div class="alert alert-' + tipo + '"><svg style="width:18px;height:18px;fill:currentColor;flex-shrink:0" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/></svg><span>' + msg + '</span></div>';
-        el.style.display = 'block';
-        el.scrollIntoView({
-          behavior: 'smooth',
-          block: 'nearest'
-        });
-      }
-
-      function clearErrors() {
-        form.querySelectorAll('.form-error').forEach(e => e.textContent = '');
-        form.querySelectorAll('.is-invalid').forEach(e => e.classList.remove('is-invalid'));
-      }
-
-      function setError(inputId, errorId, msg) {
-        const input = document.getElementById(inputId);
-        const err = document.getElementById(errorId);
-        if (input) input.classList.add('is-invalid');
-        if (err) err.textContent = msg;
-      }
-
-      // ── Validação client-side ─────────────────────────
-      function validar() {
-        let ok = true;
-
-        const nome = (document.getElementById('nome')?.value || '').trim();
-        if (!nome) {
-          setError('nome', 'nome-error', 'O nome é obrigatório.');
-          ok = false;
-        } else if (nome.trim().split(/\s+/).length < 2) {
-          setError('nome', 'nome-error', 'Informe o nome completo.');
-          ok = false;
-        }
-
-        const sexo = document.getElementById('sexo')?.value;
-        if (!sexo) {
-          setError('sexo', 'sexo-error', 'Selecione o sexo.');
-          ok = false;
-        }
-
-        const cpf = (document.getElementById('cpf')?.value || '').replace(/\D/g, '');
-        if (cpf && cpf.length !== 11) {
-          setError('cpf', 'cpf-error', 'CPF inválido.');
-          ok = false;
-        }
-
-        const tel = (document.getElementById('telefone')?.value || '').replace(/\D/g, '');
-        if (!tel) {
-          setError('telefone', 'telefone-error', 'O telefone é obrigatório.');
-          ok = false;
-        } else if (tel.length < 10) {
-          setError('telefone', 'telefone-error', 'Telefone incompleto.');
-          ok = false;
-        }
-
-        const email = (document.getElementById('email')?.value || '').trim();
-        if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-          setError('email', 'email-error', 'E-mail inválido.');
-          ok = false;
-        }
-
-        const turma = document.getElementById('turma')?.value;
-        if (!turma) {
-          setError('turma', 'turma-error', 'Selecione uma turma.');
-          ok = false;
-        }
-
-        const dtMatr = document.getElementById('data_matricula')?.value;
-        if (!dtMatr) {
-          setError('data_matricula', 'matricula-error', 'A data de matrícula é obrigatória.');
-          ok = false;
-        }
-
-        return ok;
-      }
-
-      // ── Submit ────────────────────────────────────────
-      form.addEventListener('submit', function(e) {
-        e.preventDefault();
-        clearErrors();
-        document.getElementById('aluno-alert').style.display = 'none';
-
-        if (!validar()) {
-          showAlert('Corrija os erros destacados antes de salvar.', 'danger');
-          return;
-        }
-
-        // Monta FormData para suportar upload de foto
-        const fd = new FormData();
-        fd.append('id',            alunoId || '');
-        fd.append('nome',          document.getElementById('nome')?.value.trim() || '');
-        fd.append('sexo',          document.getElementById('sexo')?.value || '');
-        fd.append('cpf',           document.getElementById('cpf')?.value || '');
-        fd.append('estado_civil',  document.getElementById('estado_civil')?.value || '');
-        fd.append('data_nascimento', document.getElementById('data_nascimento')?.value || '');
-        fd.append('profissao',     document.getElementById('profissao')?.value.trim() || '');
-        fd.append('telefone',      document.getElementById('telefone')?.value || '');
-        fd.append('email',         document.getElementById('email')?.value.trim() || '');
-        fd.append('cep',           document.getElementById('cep')?.value || '');
-        fd.append('logradouro',    document.getElementById('logradouro')?.value.trim() || '');
-        fd.append('numero',        document.getElementById('numero')?.value || '');
-        fd.append('complemento',   document.getElementById('complemento')?.value.trim() || '');
-        fd.append('bairro',        document.getElementById('bairro')?.value.trim() || '');
-        fd.append('cidade',        document.getElementById('cidade')?.value.trim() || '');
-        fd.append('estado',        document.getElementById('estado')?.value || '');
-        fd.append('data_matricula',document.getElementById('data_matricula')?.value || '');
-        fd.append('turma',         document.getElementById('turma')?.value || '');
-        fd.append('observacoes',   document.getElementById('observacoes')?.value || '');
-        fd.append('status',        document.getElementById('status')?.value || 'ativo');
-        fd.append('docente',       document.getElementById('docente')?.value || 'N');
-        // Inclui arquivo de foto apenas se o usuário selecionou um novo
-        const fotoFile = document.getElementById('fotoInput')?.files[0];
-        if (fotoFile) fd.append('foto', fotoFile);
-        // Sinaliza remoção de foto (sem novo arquivo)
-        fd.append('foto_remover', document.getElementById('fotoRemover')?.value || '0');
-
-        const btn = document.getElementById('btnSalvar');
-        btn.disabled = true;
-        btn.innerHTML = '<svg class="icon" style="animation:spin 1s linear infinite" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/></svg> Salvando…';
-
-        // POST para criar; POST com ?_method=PUT para editar (FormData não funciona com PUT nativo no PHP)
-        const url = modo === 'editar' ? 'alunos_crud.php?_method=PUT' : 'alunos_crud.php';
-        fetch(url, { method: 'POST', body: fd })
-          .then(r => r.json())
-          .then(data => {
-            if (!data.ok) {
-              // Exibe erros de campo retornados pelo servidor
-              if (data.erros) {
-                Object.entries(data.erros).forEach(([campo, msg]) => {
-                  const mapId = {
-                    nome: 'nome',
-                    sexo: 'sexo',
-                    cpf: 'cpf',
-                    telefone: 'telefone',
-                    email: 'email',
-                    turma: 'turma',
-                    data_matricula: 'data_matricula'
-                  };
-                  const mapErr = {
-                    nome: 'nome-error',
-                    sexo: 'sexo-error',
-                    cpf: 'cpf-error',
-                    telefone: 'telefone-error',
-                    email: 'email-error',
-                    turma: 'turma-error',
-                    data_matricula: 'matricula-error'
-                  };
-                  if (mapId[campo]) setError(mapId[campo], mapErr[campo], msg);
-                });
-              }
-              showAlert(data.msg || 'Erro ao salvar. Verifique os campos.', 'danger');
-            } else {
-              showAlert(data.msg || 'Salvo com sucesso!', 'success');
-              setTimeout(() => {
-                window.location.href = 'index.php?pagina=' + (form.dataset.retorno || 'alunos');
-              }, 1500);
-            }
-          })
-          .catch(() => showAlert('Falha na comunicação com o servidor.', 'danger'))
-          .finally(() => {
-            btn.disabled = false;
-            const label = modo === 'editar' ? 'Salvar Alterações' : 'Salvar Aluno';
-            btn.innerHTML = '<svg class="icon" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg> ' + label;
-          });
-      });
-
-      // Limpar (só no form de novo cadastro)
-      const btnLimpar = document.getElementById('btnLimpar');
-      if (btnLimpar) {
-        btnLimpar.addEventListener('click', function() {
-          setTimeout(() => {
-            clearErrors();
-            document.getElementById('aluno-alert').style.display = 'none';
-            if (obsCount) obsCount.textContent = '0';
-            // reset foto preview
-            window.removerFotoPreview && window.removerFotoPreview();
-            if (dtMatricula) dtMatricula.value = new Date().toISOString().split('T')[0];
-          }, 0);
-        });
-      }
-
-      // ── Foto: preview, trocar e remover ────────────────
-      const fotoInput   = document.getElementById('fotoInput');
-      const fotoImg     = document.getElementById('fotoImg');
-      const fotoIcon    = document.getElementById('fotoIcon');
-      const fotoOverlay = document.getElementById('fotoOverlay');
-      const btnRemover  = document.getElementById('btnRemoverFoto');
-      const fotoRemoverFlag = document.getElementById('fotoRemover');
-
-      function mostrarFoto(src) {
-        if (fotoImg)  { fotoImg.src = src; fotoImg.style.display = 'block'; }
-        if (fotoIcon) fotoIcon.style.display = 'none';
-        if (btnRemover) btnRemover.style.display = '';
-        if (fotoRemoverFlag) fotoRemoverFlag.value = '0';
-      }
-
-      window.removerFotoPreview = function() {
-        if (fotoImg)  { fotoImg.style.display = 'none'; fotoImg.src = ''; }
-        if (fotoIcon) fotoIcon.style.display = 'block';
-        if (btnRemover) btnRemover.style.display = 'none';
-        if (fotoInput) fotoInput.value = '';
-        if (fotoRemoverFlag) fotoRemoverFlag.value = '1';
-      };
-
-      if (fotoInput) {
-        fotoInput.addEventListener('change', function() {
-          const file = this.files[0];
-          if (!file) return;
-          if (file.size > 2 * 1024 * 1024) {
-            showAlert('A foto deve ter no máximo 2 MB.', 'danger');
-            this.value = '';
-            return;
-          }
-          const reader = new FileReader();
-          reader.onload = ev => mostrarFoto(ev.target.result);
-          reader.readAsDataURL(file);
-        });
-
-        const fp = document.getElementById('fotoPreview');
-        if (fp && fotoOverlay) {
-          fp.addEventListener('mouseenter', () => {
-            fp.style.borderColor = 'var(--color-primary)';
-            if (fotoImg && fotoImg.style.display !== 'none') fotoOverlay.style.display = 'flex';
-          });
-          fp.addEventListener('mouseleave', () => {
-            fp.style.borderColor = 'var(--color-border)';
-            fotoOverlay.style.display = 'none';
-          });
-        }
-      }
-    })();
-
-    // ── keyframe spin ─────────────────────────────────
-    if (!document.getElementById('spinStyle')) {
-      const s = document.createElement('style');
-      s.id = 'spinStyle';
-      s.textContent = '@keyframes spin { to { transform: rotate(360deg); } }';
-      document.head.appendChild(s);
-    }
-
-    // ══════════════════════════════════════════════════
-    // TURMAS — carrega select dinâmico em formulários de aluno/professor e módulo aulas
-    // ══════════════════════════════════════════════════
-    (function loadTurmasSelect() {
-      const selects = document.querySelectorAll('select#turma, select#filtro-turma, select#filtro-prof-turma, select#temas-turma, select#tema-turma-select');
-      if (!selects.length) return;
-      fetch('turmas_crud.php')
-        .then(r => r.json())
-        .then(data => {
-          if (!data.ok) return;
-          selects.forEach(sel => {
-            const isTemasSel = (sel.id === 'temas-turma' || sel.id === 'tema-turma-select');
-            const val = sel.value;
-            while (sel.options.length > 1) sel.remove(1);
-            data.turmas.forEach(t => {
-              const opt = document.createElement('option');
-              // Módulo de temas usa id numérico; outros usam nome
-              opt.value       = isTemasSel ? t.id : t.nome_turma;
-              opt.textContent = t.nome_turma;
-              sel.appendChild(opt);
-            });
-            if (val) sel.value = val;
-          });
-        })
-        .catch(() => {});
-    })();
-
-    // ══════════════════════════════════════════════════
-    // CRUD TURMAS — listagem, novo, editar
-    // ══════════════════════════════════════════════════
-    (function initTurmas() {
-      // ── Listagem ──────────────────────────────────
-      const tbody = document.getElementById('tbody-turmas');
-      if (tbody) {
-        let excluirId = null;
-
-        function escHtmlT(s) {
-          return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-        }
-
-        function showTurmaAlert(msg, type) {
-          const el = document.getElementById('turmas-alert');
-          if (!el) return;
-          el.innerHTML = `<div class="alert alert-${type}" style="padding:var(--space-3) var(--space-4)">${escHtmlT(msg)}</div>`;
-          el.style.display = 'block';
-          setTimeout(() => el.style.display = 'none', 4000);
-        }
-
-        function renderTurmas(turmas) {
-          if (!turmas.length) {
-            tbody.innerHTML = '<tr><td colspan="4" class="text-center" style="padding:var(--space-10);color:var(--color-gray-400)">Nenhuma turma encontrada.</td></tr>';
-            return;
-          }
-          tbody.innerHTML = turmas.map(t => `
-            <tr>
-              <td style="color:var(--color-gray-400);font-size:var(--text-xs)">${t.id}</td>
-              <td><strong>${escHtmlT(t.nome_turma)}</strong></td>
-              <td><span class="badge badge-primary">${t.total_alunos} aluno${t.total_alunos !== 1 ? 's' : ''}</span></td>
-              <td style="text-align:right;white-space:nowrap">
-                <a href="index.php?pagina=turma-editar&id=${t.id}" class="btn btn-ghost btn-sm" title="Editar">
-                  <svg class="icon" viewBox="0 0 20 20"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"/></svg>
-                </a>
-                <button class="btn btn-ghost btn-sm" style="color:var(--color-danger)" title="Excluir"
-                  onclick="abrirModalExcluirTurma(${t.id}, '${escHtmlT(t.nome_turma).replace(/'/g,"\\'")}')">
-                  <svg class="icon" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
-                </button>
-              </td>
-            </tr>`).join('');
-        }
-
-        function carregarTurmas() {
-          const busca = document.getElementById('turma-busca')?.value.trim() || '';
-          tbody.innerHTML = '<tr><td colspan="4" class="text-center" style="padding:var(--space-6);color:var(--color-gray-400)">Carregando…</td></tr>';
-          fetch('turmas_crud.php?' + new URLSearchParams({ busca }))
-            .then(r => r.json())
-            .then(data => {
-              if (!data.ok) { showTurmaAlert(data.msg || 'Erro ao carregar.', 'danger'); return; }
-              document.getElementById('total-turmas').textContent = data.total + ' turma' + (data.total !== 1 ? 's' : '');
-              renderTurmas(data.turmas);
-            })
-            .catch(() => showTurmaAlert('Falha na comunicação com o servidor.', 'danger'));
-        }
-
-        carregarTurmas();
-
-        document.getElementById('btnBuscarTurma')?.addEventListener('click', carregarTurmas);
-        document.getElementById('turma-busca')?.addEventListener('keydown', e => { if (e.key === 'Enter') carregarTurmas(); });
-
-        // Modal exclusão
-        window.abrirModalExcluirTurma = function(id, nome) {
-          excluirId = id;
-          document.getElementById('modal-nome-turma').textContent = nome;
-          document.getElementById('modalExcluirTurma').style.display = 'flex';
-        };
-
-        document.getElementById('btnConfirmarExcluirTurma')?.addEventListener('click', function() {
-          if (!excluirId) return;
-          this.disabled = true;
-          this.textContent = 'Excluindo…';
-          fetch('turmas_crud.php?id=' + excluirId, { method: 'DELETE' })
-            .then(r => r.json())
-            .then(data => {
-              document.getElementById('modalExcluirTurma').style.display = 'none';
-              if (data.ok) {
-                showTurmaAlert(data.msg, 'success');
-                carregarTurmas();
-              } else {
-                showTurmaAlert(data.msg || 'Erro ao excluir.', 'danger');
-              }
-            })
-            .catch(() => showTurmaAlert('Falha na comunicação.', 'danger'))
-            .finally(() => { this.disabled = false; this.textContent = 'Excluir'; });
-        });
-      }
-
-      // ── Formulário (criar / editar) ────────────────
-      const formTurma = document.getElementById('formTurma');
-      if (!formTurma) return;
-
-      const modo     = formTurma.dataset.modo;
-      const turmaId  = parseInt(formTurma.dataset.id || '0', 10);
-      const btnSalvar = document.getElementById('btnSalvarTurma');
-
-      function showTurmaFormAlert(msg, type) {
-        const el = document.getElementById('turma-alert');
-        if (!el) return;
-        el.innerHTML = `<div class="alert alert-${type}" style="padding:var(--space-3) var(--space-4)">${msg.replace(/</g,'&lt;')}</div>`;
-        el.style.display = 'block';
-      }
-
-      function clearTurmaErrors() {
-        document.getElementById('nome_turma-error').textContent = '';
-        document.getElementById('nome_turma').classList.remove('is-invalid');
-      }
-
-      // Pré-preenche no modo editar
-      if (modo === 'editar' && turmaId) {
-        fetch('turmas_crud.php?id=' + turmaId)
-          .then(r => r.json())
-          .then(data => {
-            if (!data.ok) { showTurmaFormAlert(data.msg || 'Turma não encontrada.', 'danger'); return; }
-            document.getElementById('nome_turma').value = data.turma.nome_turma;
-          })
-          .catch(() => showTurmaFormAlert('Erro ao carregar dados da turma.', 'danger'));
-      }
-
-      formTurma.addEventListener('submit', function(e) {
-        e.preventDefault();
-        clearTurmaErrors();
-        document.getElementById('turma-alert').style.display = 'none';
-
-        const nome = document.getElementById('nome_turma').value.trim();
-        if (!nome) {
-          document.getElementById('nome_turma-error').textContent = 'O nome da turma é obrigatório.';
-          document.getElementById('nome_turma').classList.add('is-invalid');
-          return;
-        }
-
-        btnSalvar.disabled = true;
-        btnSalvar.innerHTML = '<svg class="icon" style="animation:spin 1s linear infinite" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/></svg> Salvando…';
-
-        const fd = new FormData();
-        fd.append('nome_turma', nome);
-        if (modo === 'editar') fd.append('id', turmaId);
-
-        const url = modo === 'editar' ? 'turmas_crud.php?_method=PUT' : 'turmas_crud.php';
-        fetch(url, { method: 'POST', body: fd })
-          .then(r => r.json())
-          .then(data => {
-            if (!data.ok) {
-              if (data.erros?.nome_turma) {
-                document.getElementById('nome_turma-error').textContent = data.erros.nome_turma;
-                document.getElementById('nome_turma').classList.add('is-invalid');
-              }
-              showTurmaFormAlert(data.msg || 'Erro ao salvar.', 'danger');
-            } else {
-              showTurmaFormAlert(data.msg || 'Salvo com sucesso!', 'success');
-              setTimeout(() => window.location.href = 'index.php?pagina=turmas', 1500);
-            }
-          })
-          .catch(() => showTurmaFormAlert('Falha na comunicação com o servidor.', 'danger'))
-          .finally(() => {
-            btnSalvar.disabled = false;
-            btnSalvar.innerHTML = modo === 'editar'
-              ? '<svg class="icon" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg> Salvar Alterações'
-              : '<svg class="icon" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg> Salvar Turma';
-          });
-      });
-    })();
-
-    // Dashboard — cards dinâmicos
-    (function initDashboard() {
-      const valAlunos   = document.getElementById('dash-val-alunos');
-      const trendAlunos = document.getElementById('dash-trend-alunos');
-      const valProf     = document.getElementById('dash-val-prof');
-      const trendProf   = document.getElementById('dash-trend-prof');
-      const valTurmas   = document.getElementById('dash-val-turmas');
-      const trendTurmas = document.getElementById('dash-trend-turmas');
-      if (!valAlunos) return;
-
-      const svgUp   = '<svg viewBox="0 0 20 20"><path fill-rule="evenodd" d="M3.293 9.707a1 1 0 010-1.414l6-6a1 1 0 011.414 0l6 6a1 1 0 01-1.414 1.414L11 5.414V17a1 1 0 11-2 0V5.414L4.707 9.707a1 1 0 01-1.414 0z" clip-rule="evenodd"/></svg>';
-      const svgDown = '<svg viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 10.293a1 1 0 010 1.414l-6 6a1 1 0 01-1.414 0l-6-6a1 1 0 111.414-1.414L9 14.586V3a1 1 0 012 0v11.586l4.293-4.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>';
-
-      fetch('alunos_crud.php?stats=1')
-        .then(r => r.json())
-        .then(d => {
-          if (!d.ok) return;
-          valAlunos.textContent = d.total;
-          const diff = d.novos_mes - d.novos_mes_anterior;
-          const label = (diff >= 0 ? '+' : '') + d.novos_mes + ' este mês';
-          trendAlunos.className = 'trend ' + (diff >= 0 ? 'trend-up' : 'trend-down');
-          trendAlunos.innerHTML  = (diff >= 0 ? svgUp : svgDown) + ' ' + label;
-          if (valProf) {
-            valProf.textContent = d.docentes;
-            trendProf.innerHTML = svgUp + ' docente' + (d.docentes !== 1 ? 's' : '') + ' ativo' + (d.docentes !== 1 ? 's' : '');
-          }
-        })
-        .catch(() => { valAlunos.textContent = '—'; });
-
-      fetch('turmas_crud.php')
-        .then(r => r.json())
-        .then(d => {
-          if (!d.ok) return;
-          const total = typeof d.total === 'number' ? d.total : (d.turmas?.length ?? 0);
-          valTurmas.textContent = total;
-          trendTurmas.innerHTML = svgUp + ' ' + total + ' cadastrada' + (total !== 1 ? 's' : '');
-        })
-        .catch(() => { valTurmas.textContent = '—'; });
-
-      const valAulas   = document.getElementById('dash-val-aulas');
-      const trendAulas = document.getElementById('dash-trend-aulas');
-      if (valAulas) {
-        fetch('aulas_temas_crud.php?recurso=aulas-stats')
-          .then(r => r.json())
-          .then(d => {
-            if (!d.ok) return;
-            valAulas.textContent = d.atual;
-            const diff  = d.diff;
-            const label = (diff === 0 ? 'igual ao' : (diff > 0 ? '+' + diff + ' vs' : diff + ' vs')) + ' mês anterior';
-            trendAulas.className  = 'trend ' + (diff >= 0 ? 'trend-up' : 'trend-down');
-            trendAulas.innerHTML  = (diff >= 0 ? svgUp : svgDown) + ' ' + label;
-          })
-          .catch(() => { valAulas.textContent = '—'; });
-      }
-
-      // Últimas matrículas
-      const tbodyMat = document.getElementById('tbody-ultimas-matriculas');
-      // Aniversariantes do mês
-      const tbodyAniv = document.getElementById('tbody-aniversariantes');
-      if (tbodyAniv) {
-        const nomeMes = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho',
-                         'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
-        const mesAtual = new Date().getMonth(); // 0-based
-        const badge = document.getElementById('dash-aniv-mes');
-        if (badge) badge.textContent = nomeMes[mesAtual] + ' ' + new Date().getFullYear();
-        fetch('alunos_crud.php?aniversariantes=1')
-          .then(r => r.json())
-          .then(d => {
-            if (!d.ok || !d.alunos.length) {
-              tbodyAniv.innerHTML = '<tr><td colspan="3" style="text-align:center;color:var(--color-text-muted);padding:var(--space-6)">Nenhum aniversariante este mês.</td></tr>';
-              return;
-            }
-            const hoje = new Date().getDate();
-            tbodyAniv.innerHTML = d.alunos.map(a => {
-              const [y, m, dia] = a.data_nascimento.split('-');
-              const diaNum = parseInt(dia, 10);
-              const isHoje = diaNum === hoje;
-              const dataFmt = dia + '/' + m;
-              const anoLabel = y ? '<small style="color:var(--color-text-muted)"> (' + (new Date().getFullYear() - parseInt(y,10)) + ' anos)</small>' : '';
-              const turma = a.turma || '<span style="color:var(--color-text-muted)">—</span>';
-              const destaque = isHoje ? 'background:var(--color-warning-light,#fef9c3)' : '';
-              return `<tr style="${destaque}">
-                <td><strong>${a.nome}</strong>${isHoje ? ' 🎂' : ''}</td>
-                <td>${turma}</td>
-                <td>${dataFmt}${anoLabel}</td>
-              </tr>`;
-            }).join('');
-          })
-          .catch(() => {
-            tbodyAniv.innerHTML = '<tr><td colspan="3" style="text-align:center;color:var(--color-text-muted)">Erro ao carregar.</td></tr>';
-          });
-      }
-      if (tbodyMat) {
-        const badgeCls = { ativo: 'badge-success', pendente: 'badge-warning', inativo: 'badge-danger' };
-        const badgeLbl = { ativo: 'Ativo', pendente: 'Pendente', inativo: 'Inativo' };
-        const fmtDate  = s => {
-          if (!s) return '—';
-          const [y, m, d] = s.split('-');
-          return (d || '?') + '/' + (m || '?') + '/' + (y || '?');
-        };
-        fetch('alunos_crud.php?recentes=5')
-          .then(r => r.json())
-          .then(d => {
-            if (!d.ok || !d.alunos.length) {
-              tbodyMat.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--color-text-muted);padding:var(--space-6)">Nenhum aluno cadastrado ainda.</td></tr>';
-              return;
-            }
-            tbodyMat.innerHTML = d.alunos.map(a => {
-              const st  = (a.status || 'pendente').toLowerCase();
-              const cls = badgeCls[st] || 'badge-secondary';
-              const lbl = badgeLbl[st] || a.status;
-              const email = a.usuario_email
-                ? '<br><small class="text-muted">' + a.usuario_email + '</small>'
-                : '';
-              const turma = a.turma || '<span style="color:var(--color-text-muted)">—</span>';
-              return `<tr>
-                <td><strong>${a.nome}</strong>${email}</td>
-                <td>${turma}</td>
-                <td>${fmtDate(a.data_matricula)}</td>
-                <td><span class="badge ${cls}">${lbl}</span></td>
-              </tr>`;
-            }).join('');
-          })
-          .catch(() => {
-            tbodyMat.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--color-text-muted)">Erro ao carregar.</td></tr>';
-          });
-      }
-    })();
-
-    // ══════════════════════════════════════════════════
-    //  TEMAS DE AULAS — lista de temas (pagina=aulas)
-    // ══════════════════════════════════════════════════
-    (function() {
-      if (!document.getElementById('temas-container')) return;
-
-      const container  = document.getElementById('temas-container');
-      const alertEl    = document.getElementById('temas-alert');
-      let excluirTemaId = null;
-
-      const TRIM_INFO = {
-        1: { label: '1º Trimestre', cor: '#eff6ff', corTexto: '#1d4ed8', corBorda: '#bfdbfe' },
-        2: { label: '2º Trimestre', cor: '#f0fdf4', corTexto: '#166534', corBorda: '#bbf7d0' },
-        3: { label: '3º Trimestre', cor: '#fffbeb', corTexto: '#92400e', corBorda: '#fde68a' },
-        4: { label: '4º Trimestre', cor: '#fdf4ff', corTexto: '#6b21a8', corBorda: '#e9d5ff' },
-      };
-
-      // Retorna "DD/MM/AAAA – DD/MM/AAAA" para o trimestre no ano dado
-      function trimPeriodo(trimestre, ano) {
-        const inicio = [
-          [1,  1], // T1 01/Jan
-          [1,  4], // T2 01/Abr
-          [1,  7], // T3 01/Jul
-          [1, 10], // T4 01/Out
-        ][trimestre - 1];
-        const fim = [
-          [31, 3],  // T1 31/Mar
-          [30, 6],  // T2 30/Jun
-          [30, 9],  // T3 30/Set
-          [31, 12], // T4 31/Dez
-        ][trimestre - 1];
-        const fmt = (d, m, a) => String(d).padStart(2,'0') + '/' + String(m).padStart(2,'0') + '/' + a;
-        return fmt(inicio[0], inicio[1], ano) + ' – ' + fmt(fim[0], fim[1], ano);
-      }
-
-      function esc(s) {
-        return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-      }
-      function showAlert(msg, tipo) {
-        alertEl.innerHTML = '<div class="alert alert-' + tipo + '"><span>' + esc(msg) + '</span></div>';
-        alertEl.style.display = 'block';
-        if (tipo !== 'danger') setTimeout(() => alertEl.style.display = 'none', 4000);
-      }
-
-      function carregarTemas() {
-        const ano       = parseInt(document.getElementById('temas-ano').value) || new Date().getFullYear();
-        const trimestre = document.getElementById('temas-trimestre').value;
-        const turma_id  = document.getElementById('temas-turma').value;
-
-        container.innerHTML = '<div style="text-align:center;padding:var(--space-10);color:var(--color-text-muted)">Carregando…</div>';
-
-        const p = new URLSearchParams({ recurso: 'temas', ano, trimestre, turma_id });
-        fetch('aulas_temas_crud.php?' + p)
-          .then(r => r.json())
-          .then(data => {
-            if (!data.ok) { showAlert(data.msg || 'Erro ao carregar.', 'danger'); container.innerHTML = ''; return; }
-            renderTemas(data.temas, parseInt(trimestre));
-          })
-          .catch(() => showAlert('Falha na comunicação com o servidor.', 'danger'));
-      }
-
-      function renderTemas(temas, filtroTrim) {
-        const trims = filtroTrim > 0 ? [filtroTrim] : [1, 2, 3, 4];
-        const ano   = parseInt(document.getElementById('temas-ano').value) || new Date().getFullYear();
-        let html = '';
-
-        trims.forEach(t => {
-          const info    = TRIM_INFO[t];
-          const lista   = temas.filter(tm => parseInt(tm.trimestre) === t);
-          const periodo = trimPeriodo(t, ano);
-
-          html += `<div class="trim-section" style="margin-bottom:var(--space-6)">
-            <div class="trim-header" style="background:${info.cor};border:1px solid ${info.corBorda}">
-              <div style="display:flex;flex-direction:column;gap:2px">
-                <span class="trim-title" style="color:${info.corTexto}">${info.label}</span>
-                <span style="font-size:var(--text-xs);color:${info.corTexto};opacity:.75">${periodo}</span>
-              </div>
-              <span class="badge" style="background:${info.corBorda};color:${info.corTexto}">${lista.length} tema${lista.length !== 1 ? 's' : ''}</span>
-              <a href="index.php?pagina=tema-novo" class="btn btn-sm" style="background:${info.corBorda};color:${info.corTexto};border:none;margin-left:auto" onclick="event.stopPropagation();document.getElementById('tema-trimestre') && (document.getElementById('tema-trimestre').value='${t}')">
-                <svg style="width:14px;height:14px;fill:currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd"/></svg>
-                Adicionar tema
-              </a>
-            </div>`;
-
-          if (lista.length === 0) {
-            html += `<div class="trim-empty">
-              <svg style="width:24px;height:24px;fill:currentColor;opacity:.3;flex-shrink:0" viewBox="0 0 20 20"><path d="M10.394 2.08a1 1 0 00-.788 0l-7 3a1 1 0 000 1.84L5.25 8.051a.999.999 0 01.356-.257l4-1.714a1 1 0 11.788 1.838L7.667 9.088l1.94.831a1 1 0 00.787 0l7-3a1 1 0 000-1.838l-7-3z"/></svg>
-              Nenhum tema cadastrado neste trimestre.
-            </div>`;
-          } else {
-            html += '<div class="temas-grid">';
-            lista.forEach(tm => {
-              html += `<div class="tema-card">
-                <div class="tema-card__head">
-                  <div>
-                    <div class="tema-card__title">${esc(tm.titulo)}</div>
-                    ${tm.descricao ? `<div class="tema-card__desc">${esc(tm.descricao)}</div>` : ''}
-                  </div>
-                </div>
-                <div class="tema-card__meta">
-                  <span class="badge badge-primary">${esc(tm.nome_turma || 'Sem turma')}</span>
-                  <span class="badge" style="background:var(--color-gray-100);color:var(--color-gray-600)">
-                    <svg style="width:11px;height:11px;fill:currentColor;margin-right:3px" viewBox="0 0 20 20"><path d="M10.394 2.08a1 1 0 00-.788 0l-7 3a1 1 0 000 1.84L5.25 8.051a.999.999 0 01.356-.257l4-1.714a1 1 0 11.788 1.838L7.667 9.088l1.94.831a1 1 0 00.787 0l7-3a1 1 0 000-1.838l-7-3z"/></svg>
-                    ${tm.total_aulas} aula${tm.total_aulas != 1 ? 's' : ''}
-                  </span>
-                </div>
-                <div class="tema-card__actions">
-                  <a href="index.php?pagina=tema-detalhe&id=${tm.id}" class="btn btn-primary btn-sm" style="flex:1">
-                    <svg class="icon" viewBox="0 0 20 20"><path d="M10 12a2 2 0 100-4 2 2 0 000 4z"/><path fill-rule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd"/></svg>
-                    Ver Aulas
-                  </a>
-                  <a href="index.php?pagina=tema-editar&id=${tm.id}" class="btn btn-secondary btn-sm" title="Editar tema">
-                    <svg class="icon" viewBox="0 0 20 20"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"/></svg>
-                  </a>
-                  <button class="btn btn-ghost btn-sm" style="color:var(--color-danger)" title="Excluir tema"
-                    onclick="abrirExcluirTema(${tm.id}, '${esc(tm.titulo).replace(/'/g,"\\'")}')">
-                    <svg class="icon" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
-                  </button>
-                </div>
-              </div>`;
-            });
-            html += '</div>';
-          }
-          html += '</div>';
-        });
-
-        container.innerHTML = html;
-      }
-
-      // Exclusão de tema
-      window.abrirExcluirTema = function(id, nome) {
-        excluirTemaId = id;
-        document.getElementById('excluir-tema-nome').textContent = nome;
-        document.getElementById('modalExcluirTema').style.display = 'flex';
-      };
-      document.getElementById('btnConfirmarExcluirTema').addEventListener('click', function() {
-        if (!excluirTemaId) return;
-        this.disabled = true;
-        this.textContent = 'Excluindo…';
-        fetch('aulas_temas_crud.php?recurso=tema&id=' + excluirTemaId, { method: 'DELETE' })
-          .then(r => r.json())
-          .then(d => {
-            document.getElementById('modalExcluirTema').style.display = 'none';
-            showAlert(d.msg || (d.ok ? 'Excluído.' : 'Erro.'), d.ok ? 'success' : 'danger');
-            if (d.ok) carregarTemas();
-          })
-          .catch(() => showAlert('Falha ao excluir.', 'danger'))
-          .finally(() => {
-            this.disabled = false;
-            this.textContent = 'Excluir';
-            excluirTemaId = null;
-          });
-      });
-
-      document.getElementById('btnFiltrarTemas').addEventListener('click', carregarTemas);
-      document.getElementById('temas-ano').addEventListener('keydown', e => { if (e.key === 'Enter') carregarTemas(); });
-
-      carregarTemas();
-    })();
-
-    // ══════════════════════════════════════════════════
-    //  FORMULÁRIO TEMA (criar / editar)
-    // ══════════════════════════════════════════════════
-    (function() {
-      const form = document.getElementById('formTema');
-      if (!form) return;
-
-      const modo   = form.dataset.modo;
-      const temaId = parseInt(form.dataset.id || '0');
-      const alertEl = document.getElementById('tema-form-alert');
-
-      function showAlert(msg, tipo) {
-        alertEl.innerHTML = '<div class="alert alert-' + tipo + '"><span>' + msg + '</span></div>';
-        alertEl.style.display = 'block';
-      }
-
-      // Pré-carrega dados se for edição
-      if (modo === 'editar' && temaId > 0) {
-        fetch('aulas_temas_crud.php?recurso=tema&id=' + temaId)
-          .then(r => r.json())
-          .then(data => {
-            if (!data.ok) { showAlert(data.msg || 'Tema não encontrado.', 'danger'); return; }
-            const t = data.tema;
-            document.getElementById('tema-titulo').value    = t.titulo    || '';
-            document.getElementById('tema-trimestre').value = t.trimestre || '';
-            document.getElementById('tema-ano').value       = t.ano       || new Date().getFullYear();
-            document.getElementById('tema-turma-select').value = t.turma_id || '0';
-            document.getElementById('tema-descricao').value = t.descricao || '';
-          })
-          .catch(() => showAlert('Erro ao carregar dados do tema.', 'danger'));
-      }
-
-      form.addEventListener('submit', function(e) {
-        e.preventDefault();
-        const titulo    = document.getElementById('tema-titulo').value.trim();
-        const trimestre = parseInt(document.getElementById('tema-trimestre').value);
-        const ano       = parseInt(document.getElementById('tema-ano').value);
-        const turma_id  = parseInt(document.getElementById('tema-turma-select').value) || 0;
-        const descricao = document.getElementById('tema-descricao').value.trim();
-
-        // Validação
-        let valid = true;
-        if (!titulo) {
-          document.getElementById('tema-titulo-error').textContent = 'Título é obrigatório.';
-          valid = false;
-        } else { document.getElementById('tema-titulo-error').textContent = ''; }
-        if (!trimestre || trimestre < 1 || trimestre > 4) {
-          document.getElementById('tema-trimestre-error').textContent = 'Selecione o trimestre.';
-          valid = false;
-        } else { document.getElementById('tema-trimestre-error').textContent = ''; }
-        if (!valid) return;
-
-        const btn = document.getElementById('btnSalvarTema');
-        btn.disabled = true;
-        btn.textContent = 'Salvando…';
-
-        const body   = { titulo, trimestre, turma_id, ano, descricao };
-        const method = modo === 'editar' ? 'PUT' : 'POST';
-        if (modo === 'editar') body.id = temaId;
-
-        fetch('aulas_temas_crud.php', {
-          method,
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        })
-          .then(r => r.json())
-          .then(data => {
-            if (!data.ok) { showAlert(data.msg || 'Erro ao salvar.', 'danger'); return; }
-            showAlert(data.msg || 'Salvo!', 'success');
-            setTimeout(() => {
-              window.location.href = modo === 'editar'
-                ? 'index.php?pagina=tema-detalhe&id=' + temaId
-                : (data.id ? 'index.php?pagina=tema-detalhe&id=' + data.id : 'index.php?pagina=aulas');
-            }, 900);
-          })
-          .catch(() => showAlert('Falha na comunicação.', 'danger'))
-          .finally(() => {
-            btn.disabled = false;
-            btn.innerHTML = '<svg class="icon" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg> ' + (modo === 'editar' ? 'Salvar Alterações' : 'Criar Tema');
-          });
-      });
-    })();
-
-    // ══════════════════════════════════════════════════
-    //  TEMA DETALHE — aulas (pagina=tema-detalhe)
-    // ══════════════════════════════════════════════════
-    (function() {
-      const wrap = document.getElementById('tema-detalhe-wrap');
-      if (!wrap) return;
-
-      const params   = new URLSearchParams(window.location.search);
-      const temaId   = parseInt(params.get('id') || '0');
-      const tbodyEl  = document.getElementById('tdh-tbody');
-      const totalEl  = document.getElementById('tdh-total');
-      const alertEl  = document.getElementById('tdh-alert');
-      let editandoAulaId = null;
-      let perguntasLocais = [];
-
-      const TRIM_LABELS = { '1':'1º Trimestre','2':'2º Trimestre','3':'3º Trimestre','4':'4º Trimestre' };
-
-      function esc(s) {
-        return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-      }
-      function fmtData(s) {
-        if (!s) return '—';
-        const [y,m,d] = s.split('-');
-        return d + '/' + m + '/' + y;
-      }
-      function showAlert(msg, tipo) {
-        alertEl.innerHTML = '<div class="alert alert-' + tipo + '"><span>' + esc(msg) + '</span></div>';
-        alertEl.style.display = 'block';
-        if (tipo !== 'danger') setTimeout(() => alertEl.style.display = 'none', 4000);
-      }
-      function showModalAlert(msg, tipo) {
-        const el = document.getElementById('modal-aula-alert');
-        el.innerHTML = '<div class="alert alert-' + tipo + '"><span>' + esc(msg) + '</span></div>';
-        el.style.display = 'block';
-      }
-
-      if (!temaId) {
-        document.getElementById('tdh-titulo').textContent = 'Tema não encontrado';
-        return;
-      }
-
-      // Carrega informações do tema
-      function carregarTema() {
-        fetch('aulas_temas_crud.php?recurso=tema&id=' + temaId)
-          .then(r => r.json())
-          .then(data => {
-            if (!data.ok) return;
-            const t = data.tema;
-            document.getElementById('tdh-titulo').textContent = t.titulo;
-            document.title = t.titulo + ' — Escola Bíblica';
-            document.getElementById('pageTitle').textContent  = t.titulo;
-            document.getElementById('tdh-sub').textContent   = (t.nome_turma || 'Sem turma') + ' · ' + t.ano;
-            const info = document.getElementById('tdh-info');
-            info.innerHTML =
-              `<span class="badge badge-primary" style="font-size:var(--text-sm);padding:6px 12px">${TRIM_LABELS[t.trimestre] || ''}</span>
-               <span class="badge" style="background:var(--color-gray-100);color:var(--color-gray-700);font-size:var(--text-sm);padding:6px 12px">
-                 <svg style="width:13px;height:13px;fill:currentColor;margin-right:4px;vertical-align:middle" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd"/></svg>
-                 ${esc(t.nome_turma || 'Sem turma')}
-               </span>
-               ${t.descricao ? `<span style="font-size:var(--text-sm);color:var(--color-text-muted)">${esc(t.descricao)}</span>` : ''}`;
-          });
-      }
-
-      // Carrega aulas
-      function carregarAulas() {
-        tbodyEl.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:var(--space-8);color:var(--color-gray-400)">Carregando…</td></tr>';
-        fetch('aulas_temas_crud.php?recurso=aulas&tema_id=' + temaId)
-          .then(r => r.json())
-          .then(data => {
-            if (!data.ok) { showAlert(data.msg || 'Erro.', 'danger'); return; }
-            totalEl.textContent = data.total;
-            if (!data.aulas.length) {
-              tbodyEl.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:var(--space-10);color:var(--color-gray-400)">Nenhuma aula cadastrada ainda. Clique em "Nova Aula" para começar.</td></tr>';
-              return;
-            }
-            tbodyEl.innerHTML = data.aulas.map((a, i) => `
-              <tr>
-                <td style="text-align:center;color:var(--color-gray-400);font-size:var(--text-xs)">${i+1}</td>
-                <td><strong>${esc(a.titulo)}</strong></td>
-                <td style="white-space:nowrap">${fmtData(a.data_aula)}</td>
-                <td>${esc(a.professor || '—')}</td>
-                <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--color-text-muted);font-size:var(--text-sm)">${esc(a.descricao || '—')}</td>
-                <td style="text-align:right;white-space:nowrap">
-                  <button class="btn btn-ghost btn-sm" title="Editar" onclick="editarAula(${a.id})">
-                    <svg class="icon" viewBox="0 0 20 20"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"/></svg>
-                  </button>
-                </td>
-              </tr>`).join('');
-          })
-          .catch(() => showAlert('Falha na comunicação.', 'danger'));
-      }
-
-      // Carrega professores (docente=S) no select
-      function carregarProfessores(valorAtual) {
-        fetch('alunos_crud.php?docente=S')
-          .then(r => r.json())
-          .then(data => {
-            const sel = document.getElementById('aula-professor');
-            sel.innerHTML = '<option value="">— Selecionar professor —</option>';
-            (data.alunos || []).forEach(a => {
-              const opt = document.createElement('option');
-              opt.value = a.nome;
-              opt.textContent = a.nome;
-              if (valorAtual && a.nome === valorAtual) opt.selected = true;
-              sel.appendChild(opt);
-            });
-          })
-          .catch(() => {});
-      }
-
-      // Renderiza perguntas locais no modal
-      function renderPerguntas() {
-        const container  = document.getElementById('aula-perguntas-lista');
-        const btnAdd     = document.getElementById('btnAdicionarPergunta');
-        if (!container) return;
-        if (btnAdd) btnAdd.disabled = perguntasLocais.length >= 5;
-
-        if (perguntasLocais.length === 0) {
-          container.innerHTML = '<p class="perg-empty">Nenhuma pergunta adicionada.</p>';
-          return;
-        }
-
-        container.innerHTML = perguntasLocais.map((p, i) => `
-          <div class="perg-row">
-            <span class="perg-num">${i + 1}</span>
-            <div class="perg-fields">
-              <input type="text" class="form-control" placeholder="Pergunta…" maxlength="500"
-                     value="${esc(p.pergunta)}" data-pi="${i}" data-pf="pergunta">
-              <textarea class="form-control" rows="2" placeholder="Resposta… (opcional)" maxlength="1000"
-                        data-pi="${i}" data-pf="resposta">${esc(p.resposta)}</textarea>
-            </div>
-            <button type="button" class="perg-del" data-pd="${i}" title="Remover pergunta">
-              <svg viewBox="0 0 20 20" width="16" height="16"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" fill="currentColor"/></svg>
-            </button>
-          </div>`).join('');
-
-        container.querySelectorAll('[data-pf]').forEach(el => {
-          el.addEventListener('input', e => {
-            perguntasLocais[+e.target.dataset.pi][e.target.dataset.pf] = e.target.value;
-          });
-        });
-        container.querySelectorAll('[data-pd]').forEach(btn => {
-          btn.addEventListener('click', () => {
-            perguntasLocais.splice(+btn.dataset.pd, 1);
-            renderPerguntas();
-          });
-        });
-      }
-
-      // Carrega perguntas de uma aula existente
-      function carregarPerguntas(aulaId) {
-        fetch('aulas_temas_crud.php?recurso=perguntas&aula_id=' + aulaId)
-          .then(r => r.json())
-          .then(d => {
-            perguntasLocais = (d.perguntas || []).map(p => ({
-              pergunta: p.pergunta || '',
-              resposta: p.resposta || '',
-            }));
-            renderPerguntas();
-          })
-          .catch(() => { perguntasLocais = []; renderPerguntas(); });
-      }
-
-      // Abrir modal nova aula
-      window.abrirNovaAula = function() {
-        editandoAulaId = null;
-        document.getElementById('modalAulaTitulo').textContent  = 'Nova Aula';
-        document.getElementById('btnExcluirAula').style.display = 'none';
-        document.getElementById('modal-aula-alert').style.display = 'none';
-        document.getElementById('aula-titulo').value     = '';
-        document.getElementById('aula-data').value       = '';
-        document.getElementById('aula-descricao').value  = '';
-        perguntasLocais = [];
-        renderPerguntas();
-        carregarProfessores('');
-        document.getElementById('modalAula').style.display = 'flex';
-        document.getElementById('aula-titulo').focus();
-      };
-
-      // Abrir modal editar aula
-      window.editarAula = function(id) {
-        fetch('aulas_temas_crud.php?recurso=aula&id=' + id)
-          .then(r => r.json())
-          .then(data => {
-            if (!data.ok) return;
-            const a = data.aula;
-            editandoAulaId = a.id;
-            document.getElementById('modalAulaTitulo').textContent  = 'Editar Aula';
-            document.getElementById('btnExcluirAula').style.display = '';
-            document.getElementById('modal-aula-alert').style.display = 'none';
-            document.getElementById('aula-titulo').value    = a.titulo    || '';
-            document.getElementById('aula-data').value      = a.data_aula || '';
-            document.getElementById('aula-descricao').value = a.descricao  || '';
-            carregarProfessores(a.professor || '');
-            perguntasLocais = [];
-            renderPerguntas();
-            carregarPerguntas(a.id);
-            document.getElementById('modalAula').style.display = 'flex';
-          });
-      };
-
-      // Salvar aula
-      document.getElementById('btnSalvarAula').addEventListener('click', function() {
-        const titulo = document.getElementById('aula-titulo').value.trim();
-        if (!titulo) { showModalAlert('O título é obrigatório.', 'danger'); return; }
-
-        const body = {
-          tema_id:   temaId,
-          titulo,
-          data_aula:  document.getElementById('aula-data').value,
-          professor:  document.getElementById('aula-professor').value,
-          descricao:  document.getElementById('aula-descricao').value.trim(),
-          perguntas:  perguntasLocais.filter(p => p.pergunta.trim() !== ''),
-        };
-        const method = editandoAulaId ? 'PUT' : 'POST';
-        if (editandoAulaId) body.id = editandoAulaId;
-
-        this.disabled = true;
-        this.textContent = 'Salvando…';
-        fetch('aulas_temas_crud.php?recurso=aula', {
-          method,
-          headers: {'Content-Type':'application/json'},
-          body: JSON.stringify(body),
-        })
-          .then(r => r.json())
-          .then(d => {
-            if (!d.ok) { showModalAlert(d.msg || 'Erro.', 'danger'); return; }
-            document.getElementById('modalAula').style.display = 'none';
-            showAlert(d.msg || 'Salvo!', 'success');
-            carregarAulas();
-          })
-          .catch(() => showModalAlert('Falha na comunicação.', 'danger'))
-          .finally(() => {
-            this.disabled = false;
-            this.innerHTML = '<svg class="icon" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg> Salvar';
-          });
-      });
-
-      // Excluir aula
-      document.getElementById('btnExcluirAula').addEventListener('click', function() {
-        if (!editandoAulaId) return;
-        if (!confirm('Excluir esta aula?')) return;
-        fetch('aulas_temas_crud.php?recurso=aula&id=' + editandoAulaId, { method: 'DELETE' })
-          .then(r => r.json())
-          .then(d => {
-            if (!d.ok) { showModalAlert(d.msg || 'Erro.', 'danger'); return; }
-            document.getElementById('modalAula').style.display = 'none';
-            showAlert(d.msg || 'Excluída!', 'success');
-            carregarAulas();
-          })
-          .catch(() => showModalAlert('Falha ao excluir.', 'danger'));
-      });
-
-      // Fechar modal
-      const fecharModal = () => {
-        document.getElementById('modalAula').style.display = 'none';
-        editandoAulaId = null;
-      };
-      document.getElementById('btnFecharModalAula').addEventListener('click', fecharModal);
-      document.getElementById('btnCancelarAula').addEventListener('click', fecharModal);
-      document.getElementById('modalAula').addEventListener('click', e => { if (e.target === document.getElementById('modalAula')) fecharModal(); });
-
-      document.getElementById('btnNovaAula').addEventListener('click', abrirNovaAula);
-
-      document.getElementById('btnAdicionarPergunta').addEventListener('click', function() {
-        if (perguntasLocais.length >= 5) return;
-        perguntasLocais.push({ pergunta: '', resposta: '' });
-        renderPerguntas();
-      });
-
-      carregarTema();
-      carregarAulas();
-    })();
-
-    // ══════════════════════════════════════════════════
-    //  CRONOGRAMA DE AULAS
-    // ══════════════════════════════════════════════════
-    (function() {
-      const cronContainer = document.getElementById('cron-container');
-      if (!cronContainer) return;
-
-      const alertEl = document.getElementById('cron-alert');
-
-      const TRIM_INFO = {
-        '1': { label: '1º Trimestre', cor: '#1d4ed8', bg: '#eff6ff', borda: '#bfdbfe' },
-        '2': { label: '2º Trimestre', cor: '#166534', bg: '#f0fdf4', borda: '#bbf7d0' },
-        '3': { label: '3º Trimestre', cor: '#92400e', bg: '#fffbeb', borda: '#fde68a' },
-        '4': { label: '4º Trimestre', cor: '#6b21a8', bg: '#fdf4ff', borda: '#e9d5ff' },
-      };
-      const MESES = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
-
-      function esc(s) {
-        return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-      }
-      function fmtData(d) {
-        if (!d) return '—';
-        const [y,m,day] = d.split('-');
-        return day + '/' + m + '/' + y;
-      }
-      function fmtDiaSemana(d) {
-        if (!d) return '';
-        const dias = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
-        return dias[new Date(d + 'T00:00:00').getDay()];
-      }
-      function showAlert(msg, tipo) {
-        alertEl.innerHTML = '<div class="alert alert-' + tipo + '"><span>' + esc(msg) + '</span></div>';
-        alertEl.style.display = 'block';
-        if (tipo !== 'danger') setTimeout(() => alertEl.style.display = 'none', 4000);
-      }
-
-      // Popula select de turmas
-      const selTurma = document.getElementById('cron-turma');
-      if (selTurma && selTurma.options.length <= 1) {
-        fetch('turmas_crud.php')
-          .then(r => r.json())
-          .then(d => {
-            (d.turmas || []).forEach(t => {
-              const o = document.createElement('option');
-              o.value = t.id;
-              o.textContent = t.nome_turma;
-              selTurma.appendChild(o);
-            });
-          });
-      }
-
-      function carregarCronograma() {
-        const ano       = parseInt(document.getElementById('cron-ano').value) || new Date().getFullYear();
-        const trimestre = document.getElementById('cron-trimestre').value;
-        const turma_id  = document.getElementById('cron-turma').value;
-
-        cronContainer.innerHTML = '<div style="text-align:center;padding:var(--space-10);color:var(--color-text-muted)">Carregando…</div>';
-
-        const p = new URLSearchParams({ recurso: 'cronograma', ano, trimestre, turma_id });
-        fetch('aulas_temas_crud.php?' + p)
-          .then(r => r.json())
-          .then(data => {
-            if (!data.ok) { showAlert(data.msg || 'Erro ao carregar.', 'danger'); cronContainer.innerHTML = ''; return; }
-            renderCronograma(data.turmas);
-          })
-          .catch(() => showAlert('Falha na comunicação.', 'danger'));
-      }
-
-      function renderCronograma(turmas) {
-        if (!turmas.length) {
-          cronContainer.innerHTML = '<div style="text-align:center;padding:var(--space-12);color:var(--color-text-muted)">' +
-            '<svg style="width:40px;height:40px;fill:currentColor;display:block;margin:0 auto var(--space-3);opacity:.3" viewBox="0 0 20 20"><path d="M10.394 2.08a1 1 0 00-.788 0l-7 3a1 1 0 000 1.84L5.25 8.051a.999.999 0 01.356-.257l4-1.714a1 1 0 11.788 1.838L7.667 9.088l1.94.831a1 1 0 00.787 0l7-3a1 1 0 000-1.838l-7-3z"/></svg>' +
-            'Nenhuma aula encontrada para os filtros selecionados.</div>';
-          return;
-        }
-
-        let html = '';
-        turmas.forEach(turma => {
-          const aulas = turma.aulas;
-          html += `<div class="cron-turma-block">
-            <div class="cron-turma-header">
-              <svg style="width:18px;height:18px;fill:currentColor;flex-shrink:0" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd"/></svg>
-              <span>${esc(turma.nome_turma)}</span>
-              <span class="badge" style="background:rgba(255,255,255,.25);color:inherit;margin-left:auto">${aulas.length} aula${aulas.length !== 1 ? 's' : ''}</span>
-            </div>
-            <div class="table-wrapper" style="border:none;border-radius:0;box-shadow:none">
-              <table class="table">
-                <thead>
-                  <tr>
-                    <th style="width:110px">Data</th>
-                    <th>Aula</th>
-                    <th>Tema</th>
-                    <th>Professor</th>
-                    <th style="width:130px">Trimestre</th>
-                  </tr>
-                </thead>
-                <tbody>`;
-
-          aulas.forEach(a => {
-            const trim = TRIM_INFO[a.trimestre] || TRIM_INFO['1'];
-            const dataDia = a.data_aula
-              ? `<div style="font-weight:600;font-size:var(--text-sm)">${fmtData(a.data_aula)}</div>
-                 <div style="font-size:var(--text-xs);color:var(--color-text-muted)">${fmtDiaSemana(a.data_aula)}</div>`
-              : '<span style="color:var(--color-text-muted)">—</span>';
-
-            html += `<tr>
-              <td>${dataDia}</td>
-              <td>
-                <div style="font-weight:500">${esc(a.aula_titulo)}</div>
-                ${a.descricao ? `<div style="font-size:var(--text-xs);color:var(--color-text-muted);margin-top:2px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.descricao)}</div>` : ''}
-              </td>
-              <td>
-                <a href="index.php?pagina=tema-detalhe&id=${a.tema_id}" style="color:var(--color-primary);font-size:var(--text-sm)">${esc(a.tema_titulo)}</a>
-              </td>
-              <td>${a.professor ? `<span style="font-size:var(--text-sm)">${esc(a.professor)}</span>` : '<span style="color:var(--color-text-muted)">—</span>'}</td>
-              <td><span class="badge" style="background:${trim.bg};color:${trim.cor};border:1px solid ${trim.borda}">${trim.label}</span></td>
-            </tr>`;
-          });
-
-          html += `</tbody></table></div></div>`;
-        });
-
-        cronContainer.innerHTML = html;
-      }
-
-      document.getElementById('btnFiltrarCron').addEventListener('click', carregarCronograma);
-      document.getElementById('cron-ano').addEventListener('keydown', e => { if (e.key === 'Enter') carregarCronograma(); });
-
-      carregarCronograma();
-    })();
-
-    // ══════════════════════════════════════════════════
-    //  CALENDÁRIO DE COMPROMISSOS
-    // ══════════════════════════════════════════════════
-    (function() {
-      if (!document.getElementById('calGrid')) return;
-
-      const MESES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho',
-                     'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
-      const CAT_COLOR = {
-        geral:   { bg: '#eff6ff', text: '#1d4ed8', dot: '#2563eb' },
-        aula:    { bg: '#f0fdf4', text: '#166534', dot: '#16a34a' },
-        evento:  { bg: '#fff7ed', text: '#c2410c', dot: '#f97316' },
-        reuniao: { bg: '#faf5ff', text: '#6d28d9', dot: '#7c3aed' },
-        urgente: { bg: '#fef2f2', text: '#991b1b', dot: '#dc2626' },
-      };
-
-      let viewAno  = new Date().getFullYear();
-      let viewMes  = new Date().getMonth() + 1; // 1-12
-      let todayStr = new Date().toISOString().split('T')[0];
-      let eventosCache = {};    // chave: 'YYYY-MM'
-      let editandoId   = null;
-
-      // ── Utilitários ────────────────────────────────
-      function cacheKey(a, m) { return a + '-' + String(m).padStart(2,'0'); }
-      function fmtHora(t) {
-        if (!t) return '';
-        const parts = t.split(':');
-        return parts[0] + ':' + parts[1];
-      }
-      function escH(s) {
-        return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-      }
-      function showCompAlert(msg, tipo) {
-        const el = document.getElementById('comp-alert');
-        el.innerHTML = '<div class="alert alert-' + tipo + '"><span>' + escH(msg) + '</span></div>';
-        el.style.display = 'block';
-        if (tipo !== 'danger') setTimeout(() => el.style.display = 'none', 3000);
-      }
-      function showBanner(msg, tipo) {
-        const el = document.getElementById('calAlertBanner');
-        el.innerHTML = '<div class="alert alert-' + tipo + '" style="display:flex;gap:var(--space-3);align-items:flex-start"><svg style="width:18px;height:18px;fill:currentColor;flex-shrink:0;margin-top:1px" viewBox="0 0 20 20"><path d="M10 2a6 6 0 00-6 6v3.586l-.707.707A1 1 0 004 14h12a1 1 0 00.707-1.707L16 11.586V8a6 6 0 00-6-6zM10 18a3 3 0 01-3-3h6a3 3 0 01-3 3z"/></svg><span>' + msg + '</span></div>';
-        el.style.display = 'block';
-      }
-
-      const TRIMESTRE_LABEL = ['', 'Trimestre 1', 'Trimestre 2', 'Trimestre 3', 'Trimestre 4'];
-      function trimestre(mes) { return Math.ceil(mes / 3); }
-
-      // ── Renderiza o calendário ──────────────────────
-      function renderCal(eventos) {
-        const grid  = document.getElementById('calGrid');
-        const title = document.getElementById('calTitle');
-        const trim  = trimestre(viewMes);
-        title.innerHTML = escH(MESES[viewMes - 1] + ' ' + viewAno)
-          + ' <span style="font-size:var(--text-sm);font-weight:500;color:var(--color-text-muted);background:var(--color-gray-100);padding:3px 10px;border-radius:var(--radius-full);vertical-align:middle;margin-left:8px">'
-          + escH(TRIMESTRE_LABEL[trim]) + '</span>';
-
-        // Primeiro dia da semana (0=Dom … 6=Sáb) e total de dias
-        const primeiroDia = new Date(viewAno, viewMes - 1, 1).getDay();
-        const totalDias   = new Date(viewAno, viewMes, 0).getDate();
-
-        // Mapeia eventos por dia
-        const evPorDia = {};
-        (eventos || []).forEach(ev => {
-          const d = ev.data_evento; // 'YYYY-MM-DD'
-          if (!evPorDia[d]) evPorDia[d] = [];
-          evPorDia[d].push(ev);
-        });
-
-        let html = '';
-        // Células vazias antes do dia 1
-        for (let i = 0; i < primeiroDia; i++) {
-          html += '<div class="cal-cell cal-cell--empty"></div>';
-        }
-        // Dias do mês
-        for (let d = 1; d <= totalDias; d++) {
-          const dateStr = viewAno + '-' + String(viewMes).padStart(2,'0') + '-' + String(d).padStart(2,'0');
-          const isToday = dateStr === todayStr;
-          const dayEvs  = evPorDia[dateStr] || [];
-          const pills   = dayEvs.slice(0, 3).map(ev => {
-            const c = CAT_COLOR[ev.categoria] || CAT_COLOR.geral;
-            const hora = ev.hora_inicio ? ' · ' + fmtHora(ev.hora_inicio) : '';
-            return `<div class="cal-pill" style="background:${c.bg};color:${c.text}" data-ev-id="${ev.id}" title="${escH(ev.titulo)}">${escH(ev.titulo.length > 14 ? ev.titulo.slice(0,13)+'…' : ev.titulo)}${hora}</div>`;
-          }).join('');
-          const moreTag = dayEvs.length > 3 ? `<div class="cal-pill cal-pill--more">+${dayEvs.length - 3} mais</div>` : '';
-
-          html += `<div class="cal-cell${isToday ? ' cal-cell--today' : ''}" data-date="${dateStr}">
-            <span class="cal-day-num">${d}</span>
-            <div class="cal-pills">${pills}${moreTag}</div>
-          </div>`;
-        }
-        // Completar última linha
-        const total = primeiroDia + totalDias;
-        const resto = total % 7;
-        if (resto !== 0) {
-          for (let i = 0; i < 7 - resto; i++) {
-            html += '<div class="cal-cell cal-cell--empty"></div>';
-          }
-        }
-        grid.innerHTML = html;
-
-        // Clique no dia (área vazia) → abrir modal no modo criar
-        grid.querySelectorAll('.cal-cell:not(.cal-cell--empty)').forEach(cell => {
-          cell.addEventListener('click', function(e) {
-            if (e.target.closest('.cal-pill[data-ev-id]')) return;
-            abrirModalCriar(this.dataset.date);
-          });
-        });
-
-        // Clique em uma pílula de evento → abrir modal no modo editar
-        grid.querySelectorAll('.cal-pill[data-ev-id]').forEach(pill => {
-          pill.addEventListener('click', function(e) {
-            e.stopPropagation();
-            abrirModalEditar(this.dataset.evId);
-          });
-        });
-      }
-
-      // ── Lista lateral ───────────────────────────────
-      function renderLista(eventos) {
-        const el    = document.getElementById('calEventList');
-        const count = document.getElementById('calListCount');
-        const title = document.getElementById('calListTitle');
-        title.textContent = 'Compromissos — ' + MESES[viewMes - 1] + ' (' + TRIMESTRE_LABEL[trimestre(viewMes)] + ')';
-        count.textContent = (eventos || []).length;
-
-        if (!eventos || !eventos.length) {
-          el.innerHTML = '<div style="padding:var(--space-6);text-align:center;color:var(--color-text-muted)"><svg style="width:28px;height:28px;fill:currentColor;margin:0 auto var(--space-2);display:block" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clip-rule="evenodd"/></svg>Nenhum compromisso.</div>';
-          return;
-        }
-
-        el.innerHTML = eventos.map(ev => {
-          const c = CAT_COLOR[ev.categoria] || CAT_COLOR.geral;
-          const [, mes, dia] = (ev.data_evento || '').split('-');
-          const horaStr = ev.hora_inicio ? fmtHora(ev.hora_inicio) : '';
-          return `<div class="cal-list-item" style="cursor:pointer" data-ev-id="${ev.id}">
-            <div class="cal-list-dot" style="background:${c.dot}"></div>
-            <div style="flex:1;min-width:0">
-              <div style="font-size:var(--text-sm);font-weight:600;color:var(--color-gray-800);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escH(ev.titulo)}</div>
-              <div style="font-size:var(--text-xs);color:var(--color-text-muted)">${dia}/${mes}${horaStr ? ' · ' + horaStr : ''}</div>
-              ${ev.descricao ? `<div style="font-size:var(--text-xs);color:var(--color-text-muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escH(ev.descricao)}</div>` : ''}
-            </div>
-            <span class="badge" style="background:${c.bg};color:${c.text};flex-shrink:0">${escH(ev.categoria)}</span>
-          </div>`;
-        }).join('');
-
-        el.querySelectorAll('.cal-list-item').forEach(item => {
-          item.addEventListener('click', () => abrirModalEditar(item.dataset.evId));
-        });
-      }
-
-      // ── Carrega eventos ─────────────────────────────
-      function carregarMes(ano, mes) {
-        const key = cacheKey(ano, mes);
-        if (eventosCache[key]) {
-          renderCal(eventosCache[key]);
-          renderLista(eventosCache[key]);
-          return;
-        }
-        fetch('calendario_crud.php?ano=' + ano + '&mes=' + mes)
-          .then(r => r.json())
-          .then(data => {
-            if (!data.ok) return;
-            eventosCache[key] = data.eventos;
-            renderCal(data.eventos);
-            renderLista(data.eventos);
-          })
-          .catch(() => {});
-      }
-
-      function invalidarCache() {
-        eventosCache = {};
-      }
-
-      // ── Modal ───────────────────────────────────────
-      function abrirModal() {
-        document.getElementById('comp-alert').style.display = 'none';
-        document.getElementById('modalCompromisso').style.display = 'flex';
-      }
-      function fecharModal() {
-        document.getElementById('modalCompromisso').style.display = 'none';
-        editandoId = null;
-      }
-
-      function abrirModalCriar(dateStr) {
-        editandoId = null;
-        document.getElementById('modalCompTitulo').textContent = 'Novo Compromisso';
-        document.getElementById('btnExcluirComp').style.display = 'none';
-        document.getElementById('comp-titulo').value      = '';
-        document.getElementById('comp-data').value        = dateStr || todayStr;
-        document.getElementById('comp-hora-inicio').value = '';
-        document.getElementById('comp-hora-fim').value    = '';
-        document.getElementById('comp-categoria').value   = 'geral';
-        document.getElementById('comp-lembrete').value    = '30';
-        document.getElementById('comp-descricao').value   = '';
-        abrirModal();
-        document.getElementById('comp-titulo').focus();
-      }
-
-      function abrirModalEditar(id) {
-        fetch('calendario_crud.php?id=' + id)
-          .then(r => r.json())
-          .then(data => {
-            if (!data.ok) return;
-            const ev = data.evento;
-            editandoId = ev.id;
-            document.getElementById('modalCompTitulo').textContent = 'Editar Compromisso';
-            document.getElementById('btnExcluirComp').style.display = '';
-            document.getElementById('comp-titulo').value      = ev.titulo;
-            document.getElementById('comp-data').value        = ev.data_evento;
-            document.getElementById('comp-hora-inicio').value = ev.hora_inicio ? ev.hora_inicio.slice(0,5) : '';
-            document.getElementById('comp-hora-fim').value    = ev.hora_fim    ? ev.hora_fim.slice(0,5)    : '';
-            document.getElementById('comp-categoria').value   = ev.categoria   || 'geral';
-            document.getElementById('comp-lembrete').value    = ev.lembrete_minutos || '30';
-            document.getElementById('comp-descricao').value   = ev.descricao   || '';
-            abrirModal();
-          });
-      }
-
-      // ── Salvar ──────────────────────────────────────
-      document.getElementById('btnSalvarComp').addEventListener('click', function() {
-        const titulo = document.getElementById('comp-titulo').value.trim();
-        const data   = document.getElementById('comp-data').value;
-        if (!titulo) { showCompAlert('O título é obrigatório.', 'danger'); return; }
-        if (!data)   { showCompAlert('A data é obrigatória.', 'danger'); return; }
-
-        const body = {
-          titulo,
-          descricao:       document.getElementById('comp-descricao').value.trim(),
-          data_evento:     data,
-          hora_inicio:     document.getElementById('comp-hora-inicio').value,
-          hora_fim:        document.getElementById('comp-hora-fim').value,
-          categoria:       document.getElementById('comp-categoria').value,
-          lembrete_minutos: parseInt(document.getElementById('comp-lembrete').value) || 0,
-        };
-
-        const method = editandoId ? 'PUT' : 'POST';
-        if (editandoId) body.id = editandoId;
-
-        this.disabled = true;
-        this.textContent = 'Salvando…';
-
-        fetch('calendario_crud.php', {
-          method,
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        })
-          .then(r => r.json())
-          .then(d => {
-            if (!d.ok) { showCompAlert(d.msg || 'Erro ao salvar.', 'danger'); return; }
-            showCompAlert(d.msg || 'Salvo!', 'success');
-            invalidarCache();
-            carregarMes(viewAno, viewMes);
-            setTimeout(fecharModal, 900);
-            agendarNotificacoes();
-          })
-          .catch(() => showCompAlert('Falha na comunicação.', 'danger'))
-          .finally(() => {
-            this.disabled = false;
-            this.innerHTML = '<svg class="icon" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg> Salvar';
-          });
-      });
-
-      // ── Excluir ─────────────────────────────────────
-      document.getElementById('btnExcluirComp').addEventListener('click', function() {
-        if (!editandoId) return;
-        if (!confirm('Excluir este compromisso?')) return;
-        fetch('calendario_crud.php?id=' + editandoId, { method: 'DELETE' })
-          .then(r => r.json())
-          .then(d => {
-            if (!d.ok) { showCompAlert(d.msg || 'Erro ao excluir.', 'danger'); return; }
-            fecharModal();
-            invalidarCache();
-            carregarMes(viewAno, viewMes);
-            agendarNotificacoes();
-          })
-          .catch(() => showCompAlert('Falha ao excluir.', 'danger'));
-      });
-
-      // ── Fechar modal ────────────────────────────────
-      document.getElementById('btnFecharModalComp').addEventListener('click', fecharModal);
-      document.getElementById('btnCancelarComp').addEventListener('click', fecharModal);
-      document.getElementById('modalCompromisso').addEventListener('click', function(e) {
-        if (e.target === this) fecharModal();
-      });
-
-      // ── Botão "Novo Compromisso" ────────────────────
-      document.getElementById('btnNovoCompromisso').addEventListener('click', () => abrirModalCriar(todayStr));
-
-      // ── Navegação mês ───────────────────────────────
-      document.getElementById('calPrev').addEventListener('click', () => {
-        viewMes--;
-        if (viewMes < 1) { viewMes = 12; viewAno--; }
-        carregarMes(viewAno, viewMes);
-      });
-      document.getElementById('calNext').addEventListener('click', () => {
-        viewMes++;
-        if (viewMes > 12) { viewMes = 1; viewAno++; }
-        carregarMes(viewAno, viewMes);
-      });
-      document.getElementById('calHoje').addEventListener('click', () => {
-        const now = new Date();
-        viewAno = now.getFullYear();
-        viewMes = now.getMonth() + 1;
-        carregarMes(viewAno, viewMes);
-      });
-
-      // ══════════════════════════════════════════════
-      //  SISTEMA DE NOTIFICAÇÕES / LEMBRETES
-      // ══════════════════════════════════════════════
-      const notifTimers = [];
-
-      function agendarNotificacoes() {
-        // Cancela timers existentes
-        notifTimers.forEach(t => clearTimeout(t));
-        notifTimers.length = 0;
-
-        fetch('calendario_crud.php?proximos=2')
-          .then(r => r.json())
-          .then(data => {
-            if (!data.ok) return;
-            const agora = new Date();
-            const hoje  = agora.toISOString().split('T')[0];
-            const eventosHoje = [];
-
-            data.eventos.forEach(ev => {
-              if (!ev.lembrete_minutos || ev.lembrete_minutos <= 0) return;
-
-              const hora = ev.hora_inicio ? ev.hora_inicio.slice(0,5) : '00:00';
-              const dtEvento = new Date(ev.data_evento + 'T' + hora + ':00');
-              const dtLembrete = new Date(dtEvento.getTime() - ev.lembrete_minutos * 60000);
-              const msAte = dtLembrete.getTime() - agora.getTime();
-
-              if (ev.data_evento === hoje) eventosHoje.push(ev);
-
-              if (msAte > 0 && msAte < 24 * 60 * 60 * 1000) {
-                const t = setTimeout(() => {
-                  dispararNotificacao(ev);
-                }, msAte);
-                notifTimers.push(t);
-              }
-            });
-
-            // Banner visual para eventos de hoje
-            if (eventosHoje.length > 0) {
-              const lista = eventosHoje.map(ev => {
-                const h = ev.hora_inicio ? ' às ' + fmtHora(ev.hora_inicio) : '';
-                return '<strong>' + escH(ev.titulo) + '</strong>' + h;
-              }).join(' · ');
-              showBanner('Compromissos de hoje: ' + lista, 'info');
-            }
-          })
-          .catch(() => {});
-      }
-
-      function dispararNotificacao(ev) {
-        const hora = ev.hora_inicio ? ' às ' + fmtHora(ev.hora_inicio) : '';
-        // Toast visual
-        mostrarToast(ev.titulo + hora, ev.categoria);
-        // Browser Notification
-        if ('Notification' in window && Notification.permission === 'granted') {
-          new Notification('📅 Lembrete — Escola Bíblica', {
-            body: ev.titulo + hora + (ev.descricao ? '\n' + ev.descricao : ''),
-            icon: 'uploads/fotos/icon.png',
-            tag:  'comp-' + ev.id,
-          });
-        }
-      }
-
-      function mostrarToast(msg, categoria) {
-        const c = CAT_COLOR[categoria] || CAT_COLOR.geral;
-        const toast = document.createElement('div');
-        toast.style.cssText = `
-          position:fixed;bottom:var(--space-6);right:var(--space-6);
-          background:${c.bg};color:${c.text};
-          border:1px solid ${c.dot};border-radius:var(--radius-md);
-          padding:var(--space-3) var(--space-5);
-          box-shadow:var(--shadow-lg);
-          font-size:var(--text-sm);font-weight:500;
-          z-index:9999;display:flex;align-items:center;gap:var(--space-2);
-          animation:slideInToast .3s ease;
-          max-width:320px;
-        `;
-        toast.innerHTML = `<svg style="width:16px;height:16px;fill:currentColor;flex-shrink:0" viewBox="0 0 20 20"><path d="M10 2a6 6 0 00-6 6v3.586l-.707.707A1 1 0 004 14h12a1 1 0 00.707-1.707L16 11.586V8a6 6 0 00-6-6zM10 18a3 3 0 01-3-3h6a3 3 0 01-3 3z"/></svg>
-          <span>🔔 Lembrete: <strong>${escH(msg)}</strong></span>`;
-        document.body.appendChild(toast);
-        setTimeout(() => { toast.style.opacity = '0'; toast.style.transition = 'opacity .4s'; setTimeout(() => toast.remove(), 400); }, 5000);
-      }
-
-      // Solicita permissão de notificação ao abrir o calendário
-      if ('Notification' in window && Notification.permission === 'default') {
-        Notification.requestPermission();
-      }
-
-      // Estilo da animação do toast
-      if (!document.getElementById('toastStyle')) {
-        const s = document.createElement('style');
-        s.id = 'toastStyle';
-        s.textContent = '@keyframes slideInToast { from { transform:translateY(20px);opacity:0; } to { transform:none;opacity:1; } }';
-        document.head.appendChild(s);
-      }
-
-      // ── Inicialização ───────────────────────────────
-      carregarMes(viewAno, viewMes);
-      agendarNotificacoes();
-    })();
-
-    // ══════════════════════════════════════════════════
-    //  DASHBOARD — Aulas do Próximo Domingo
-    // ══════════════════════════════════════════════════
-    (function() {
-      const lista = document.getElementById('dash-domingo-lista');
-      if (!lista) return;
-
-      // Calcula a data do próximo domingo (ou hoje se já for domingo)
-      function proximoDomingo() {
-        const hoje = new Date();
-        hoje.setHours(0, 0, 0, 0);
-        const diasAte = (7 - hoje.getDay()) % 7; // 0 = hoje é domingo
-        const dom = new Date(hoje);
-        dom.setDate(hoje.getDate() + diasAte);
-        return dom;
-      }
-
-      function fmtDateBR(d) {
-        return String(d.getDate()).padStart(2,'0') + '/' +
-               String(d.getMonth()+1).padStart(2,'0') + '/' + d.getFullYear();
-      }
-      function fmtDateISO(d) {
-        return d.getFullYear() + '-' +
-               String(d.getMonth()+1).padStart(2,'0') + '-' +
-               String(d.getDate()).padStart(2,'0');
-      }
-      function esc(s) {
-        return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-      }
-
-      const TRIM_COR = { '1':'#1d4ed8','2':'#166534','3':'#92400e','4':'#6b21a8' };
-      const TRIM_BG  = { '1':'#eff6ff','2':'#f0fdf4','3':'#fffbeb','4':'#fdf4ff' };
-
-      const domingo = proximoDomingo();
-      const eHoje   = domingo.getDay() === new Date().getDay() && domingo.toDateString() === new Date().toDateString();
-
-      // Atualiza badge
-      const badge = document.getElementById('dash-domingo-data');
-      if (badge) badge.textContent = (eHoje ? 'Hoje · ' : '') + fmtDateBR(domingo);
-
-      fetch('aulas_temas_crud.php?recurso=aulas-data&data=' + fmtDateISO(domingo))
-        .then(r => r.json())
-        .then(data => {
-          if (!data.ok) { lista.innerHTML = '<div style="color:var(--color-danger);font-size:var(--text-sm)">Erro ao carregar aulas.</div>'; return; }
-          if (!data.aulas.length) {
-            lista.innerHTML = '<div style="text-align:center;padding:var(--space-8);color:var(--color-text-muted)">' +
-              '<svg style="width:28px;height:28px;fill:currentColor;display:block;margin:0 auto var(--space-2)" viewBox="0 0 20 20"><path d="M10.394 2.08a1 1 0 00-.788 0l-7 3a1 1 0 000 1.84L5.25 8.051a.999.999 0 01.356-.257l4-1.714a1 1 0 11.788 1.838L7.667 9.088l1.94.831a1 1 0 00.787 0l7-3a1 1 0 000-1.838l-7-3z"/></svg>' +
-              'Nenhuma aula cadastrada para este domingo.</div>';
-            return;
-          }
-          lista.innerHTML = data.aulas.map(a => {
-            const cor  = TRIM_COR[a.trimestre] || 'var(--color-primary)';
-            const corBg = TRIM_BG[a.trimestre] || 'var(--color-primary-light)';
-            return `<div style="display:flex;gap:var(--space-3);padding:var(--space-3) 0;border-bottom:1px solid var(--color-border);align-items:flex-start">
-              <span style="width:6px;height:6px;border-radius:50%;background:${cor};flex-shrink:0;margin-top:6px"></span>
-              <div style="flex:1;min-width:0">
-                <div style="font-weight:600;font-size:var(--text-sm);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(a.titulo)}</div>
-                <div style="font-size:var(--text-xs);color:var(--color-text-muted);margin-top:2px">
-                  ${a.nome_turma ? `<span style="margin-right:6px">📚 ${esc(a.nome_turma)}</span>` : ''}
-                  ${a.professor  ? `<span>🎓 ${esc(a.professor)}</span>` : ''}
-                </div>
-                <div style="margin-top:4px">
-                  <span class="badge" style="background:${corBg};color:${cor};font-size:10px">${esc(a.tema_titulo)}</span>
-                </div>
-              </div>
-            </div>`;
-          }).join('');
-        })
-        .catch(() => { lista.innerHTML = '<div style="color:var(--color-danger);font-size:var(--text-sm)">Falha na comunicação.</div>'; });
-    })();
-
-    // ══════════════════════════════════════════════════
-    //  DASHBOARD — Próximos Compromissos
-    // ══════════════════════════════════════════════════
-    (function() {
-      const container = document.getElementById('dash-proximos-lista');
-      if (!container) return;
-
-      const CAT_COLOR = {
-        geral:   { bg: '#eff6ff', text: '#1d4ed8', dot: '#2563eb' },
-        aula:    { bg: '#f0fdf4', text: '#166534', dot: '#16a34a' },
-        evento:  { bg: '#fff7ed', text: '#c2410c', dot: '#f97316' },
-        reuniao: { bg: '#faf5ff', text: '#6d28d9', dot: '#7c3aed' },
-        urgente: { bg: '#fef2f2', text: '#991b1b', dot: '#dc2626' },
-      };
-
-      const CAT_LABEL = {
-        geral: 'Geral', aula: 'Aula', evento: 'Evento', reuniao: 'Reunião', urgente: 'Urgente'
-      };
-
-      function escH(s) {
-        return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-      }
-      function fmtHora(t) {
-        if (!t) return '';
-        const p = t.split(':');
-        return p[0] + ':' + p[1];
-      }
-      function fmtDataBR(s) {
-        if (!s) return '';
-        const [y, m, d] = s.split('-');
-        return d + '/' + m + '/' + y;
-      }
-      function diasAte(dateStr) {
-        const hoje = new Date(); hoje.setHours(0,0,0,0);
-        const ev   = new Date(dateStr + 'T00:00:00');
-        const diff = Math.round((ev - hoje) / 86400000);
-        if (diff === 0) return '<span style="color:var(--color-primary);font-weight:600">Hoje</span>';
-        if (diff === 1) return '<span style="color:var(--color-warning);font-weight:600">Amanhã</span>';
-        return 'em ' + diff + ' dias';
-      }
-
-      fetch('calendario_crud.php?proximos=30')
-        .then(r => r.json())
-        .then(data => {
-          if (!data.ok || !data.eventos.length) {
-            container.innerHTML = '<div style="padding:var(--space-4) 0;display:flex;align-items:center;gap:var(--space-3);color:var(--color-text-muted)">'
-              + '<svg style="width:20px;height:20px;fill:currentColor;flex-shrink:0" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clip-rule="evenodd"/></svg>'
-              + 'Nenhum compromisso nos próximos 30 dias.</div>';
-            return;
-          }
-
-          container.innerHTML = data.eventos.map(ev => {
-            const c    = CAT_COLOR[ev.categoria] || CAT_COLOR.geral;
-            const hora = ev.hora_inicio ? ' · ' + fmtHora(ev.hora_inicio) : '';
-            const dur  = (ev.hora_inicio && ev.hora_fim) ? ' – ' + fmtHora(ev.hora_fim) : '';
-            return `<div class="dash-compromisso-item">
-              <div class="dash-comp-dot" style="background:${c.dot}"></div>
-              <div style="flex:1;min-width:0">
-                <div style="font-size:var(--text-sm);font-weight:600;color:var(--color-gray-800)">${escH(ev.titulo)}</div>
-                <div style="font-size:var(--text-xs);color:var(--color-text-muted);margin-top:1px">
-                  ${fmtDataBR(ev.data_evento)}${hora}${dur}
-                </div>
-                ${ev.descricao ? `<div style="font-size:var(--text-xs);color:var(--color-text-muted);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escH(ev.descricao)}</div>` : ''}
-              </div>
-              <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0">
-                <span class="badge" style="background:${c.bg};color:${c.text}">${CAT_LABEL[ev.categoria] || ev.categoria}</span>
-                <span style="font-size:var(--text-xs);color:var(--color-text-muted)">${diasAte(ev.data_evento)}</span>
-              </div>
-            </div>`;
-          }).join('');
-        })
-        .catch(() => {
-          container.innerHTML = '<div style="color:var(--color-danger);font-size:var(--text-sm)">Erro ao carregar compromissos.</div>';
-        });
-    })();
-
-    // ══════════════════════════════════════════════════
-    //  CONFIGURAÇÕES — Modo Noturno
-    // ══════════════════════════════════════════════════
-    (function() {
-      const toggle = document.getElementById('toggleDarkMode');
-      if (!toggle) return;
-
-      const html = document.documentElement;
-
-      // Sincroniza estado inicial do toggle com o que já foi aplicado
-      toggle.checked = html.getAttribute('data-theme') === 'dark';
-
-      toggle.addEventListener('change', function() {
-        if (this.checked) {
-          html.setAttribute('data-theme', 'dark');
-          localStorage.setItem('escola-theme', 'dark');
-        } else {
-          html.removeAttribute('data-theme');
-          localStorage.setItem('escola-theme', 'light');
-        }
-      });
-    })();
-
-  </script>
+  <script src="libs/js/global.js?v=<?php echo filemtime('libs/js/global.js'); ?>"></script>
+  <?php
+  $jsPageMap = [
+    'dashboard'        => ['dashboard.js'],
+    'alunos'           => ['alunos.js'],
+    'aluno-novo'       => ['form-pessoa.js'],
+    'aluno-editar'     => ['form-pessoa.js'],
+    'professores'      => ['professores.js'],
+    'professor-novo'   => ['form-pessoa.js'],
+    'professor-editar' => ['form-pessoa.js'],
+    'turmas'           => ['turmas.js'],
+    'turma-nova'       => ['turmas.js'],
+    'turma-editar'     => ['turmas.js'],
+    'aulas'            => ['temas.js'],
+    'tema-novo'        => ['temas.js'],
+    'tema-editar'      => ['temas.js'],
+    'tema-detalhe'     => ['temas.js'],
+    'cronograma'       => ['cronograma.js'],
+    'calendario'       => ['calendario.js'],
+    'configuracoes'    => ['configuracoes.js'],
+  ];
+  foreach ($jsPageMap[$pagina] ?? [] as $js) {
+    $path = 'libs/js/' . $js;
+    echo '<script src="' . htmlspecialchars($path, ENT_QUOTES, 'UTF-8') . '?v=' . filemtime($path) . '"></script>' . "\n";
+  }
+  ?>
 
 </body>
 

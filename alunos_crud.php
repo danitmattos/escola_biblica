@@ -4,21 +4,35 @@
  * Aceita: GET (listar/buscar/obter), POST (criar), PUT (editar), DELETE (excluir)
  */
 
-
-session_start();
-header('Content-Type: application/json; charset=utf-8');
-
-// ── Proteção: apenas usuários autenticados ─────────────────
-if (!isset($_SESSION['usuario'])) {
-    http_response_code(401);
-    echo json_encode(['ok' => false, 'msg' => 'Não autenticado.']);
+// Captura erros PHP e retorna como JSON (remover após depuração)
+set_exception_handler(function($e) {
+    http_response_code(500);
+    header('Content-Type: application/json');
+    echo json_encode(['ok' => false, 'msg' => 'Exceção: ' . $e->getMessage()]);
     exit;
+});
+set_error_handler(function($errno, $errstr, $errfile, $errline) {
+    http_response_code(500);
+    header('Content-Type: application/json');
+    echo json_encode(['ok' => false, 'msg' => "Erro PHP ($errno): $errstr em $errfile linha $errline"]);
+    exit;
+}, E_ERROR | E_WARNING | E_PARSE);
+
+require_once __DIR__ . '/libs/helpers.php';
+/** @var mysqli $conexao */
+requireAuth();
+
+$method = $_SERVER['REQUEST_METHOD'];
+// Suporta override de método via ?_method=PUT para formulários multipart/form-data
+if ($method === 'POST' && !empty($_GET['_method'])) {
+    $override = strtoupper($_GET['_method']);
+    if (in_array($override, ['PUT', 'DELETE'], true)) $method = $override;
 }
 
-require_once __DIR__ . '/libs/connection.php';
-
-// Desativa exceções mysqli — erros tratados manualmente
-mysqli_report(MYSQLI_REPORT_OFF);
+// Valida CSRF somente para métodos que alteram dados
+if (in_array($method, ['POST', 'PUT', 'DELETE'], true)) {
+    csrfCheck();
+}
 
 $method = $_SERVER['REQUEST_METHOD'];
 // Suporta override de método via ?_method=PUT para formulários multipart/form-data
@@ -53,6 +67,54 @@ switch ($method) {
 // GET — listar todos / buscar / obter um por id
 // ══════════════════════════════════════════════════════════
 function handleGet($db) {
+    // Perfil do usuário logado (para popover do avatar)
+    if (isset($_GET['meu-perfil'])) {
+        $uid = (int)($_SESSION['usuario_id'] ?? 0);
+        if (!$uid) { http_response_code(401); echo json_encode(['ok'=>false,'msg'=>'Sem sessão']); return; }
+
+        // Dados básicos do aluno
+        $stmt = $db->prepare('SELECT nome, turma, foto, usuario_email FROM tb_cad_alunos WHERE id = ?');
+        $stmt->bind_param('i', $uid);
+        $stmt->execute();
+        $aluno = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if (!$aluno) { http_response_code(404); echo json_encode(['ok'=>false,'msg'=>'Aluno não encontrado']); return; }
+
+        // Trimestre atual (1-4)
+        $tri = (int)ceil((int)date('n') / 3);
+        $ano = (int)date('Y');
+
+        // Presenças no trimestre — conta registros na tb_aula_pratica_presenca
+        // cujas sessões pertencem ao trimestre atual
+        $sqlPres = "SELECT COUNT(*) AS total FROM tb_aula_pratica_presenca p
+                    JOIN tb_aula_pratica_sessoes s ON s.id = p.sessao_id
+                    WHERE p.aluno_id = ? AND QUARTER(s.data_sessao) = ? AND YEAR(s.data_sessao) = ?";
+        $st = $db->prepare($sqlPres);
+        $st->bind_param('iii', $uid, $tri, $ano);
+        $st->execute();
+        $presencas = (int)$st->get_result()->fetch_assoc()['total'];
+        $st->close();
+
+        // Total de pontos (todas as respostas)
+        $sqlPts = "SELECT COALESCE(SUM(pontos),0) AS total FROM tb_aula_pratica_respostas WHERE aluno_id = ?";
+        $st2 = $db->prepare($sqlPts);
+        $st2->bind_param('i', $uid);
+        $st2->execute();
+        $pontos = (int)$st2->get_result()->fetch_assoc()['total'];
+        $st2->close();
+
+        echo json_encode(['ok'=>true, 'perfil'=>[
+            'nome'       => $aluno['nome'],
+            'email'      => $aluno['usuario_email'],
+            'turma'      => $aluno['turma'] ?: 'Sem turma',
+            'foto'       => $aluno['foto'] ?? '',
+            'presencas'  => $presencas,
+            'trimestre'  => $tri,
+            'pontos'     => $pontos,
+        ]]);
+        return;
+    }
+
     // Stats para o dashboard
     if (!empty($_GET['stats'])) {
         $r = $db->query(
@@ -65,7 +127,7 @@ function handleGet($db) {
                 SUM(docente = 'S') AS docentes
             FROM tb_cad_alunos"
         );
-        if (!$r) { http_response_code(500); echo json_encode(['ok'=>false,'msg'=>$db->error]); return; }
+        if (!$r) { http_response_code(500); echo json_encode(['ok'=>false,'msg'=>'Erro interno.']); return; }
         $row = $r->fetch_assoc();
         echo json_encode(['ok' => true,
             'total'              => (int)$row['total'],
@@ -87,7 +149,7 @@ function handleGet($db) {
              ORDER BY id DESC
              LIMIT ?'
         );
-        if (!$stmt) { http_response_code(500); echo json_encode(['ok'=>false,'msg'=>$db->error]); return; }
+        if (!$stmt) { http_response_code(500); echo json_encode(['ok'=>false,'msg'=>'Erro interno.']); return; }
         $stmt->bind_param('i', $limit);
         $stmt->execute();
         $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
@@ -106,7 +168,7 @@ function handleGet($db) {
                AND data_nascimento IS NOT NULL
              ORDER BY DAY(data_nascimento)'
         );
-        if (!$stmt) { http_response_code(500); echo json_encode(['ok'=>false,'msg'=>$db->error]); return; }
+        if (!$stmt) { http_response_code(500); echo json_encode(['ok'=>false,'msg'=>'Erro interno.']); return; }
         $stmt->bind_param('i', $mes);
         $stmt->execute();
         $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
@@ -119,16 +181,16 @@ function handleGet($db) {
     if (!empty($_GET['id'])) {
         $id = (int) $_GET['id'];
         $stmt = $db->prepare(
-            'SELECT id, nome, sexo, cpf, estado_civil, profissao,
-                    telefone, usuario_email,
-                    cep, logradouro, numero_endereco, complemento_endereco,
-                    bairro, cidade, UF,
-                    data_nascimento, data_matricula, turma, observacoes, status, foto, docente
+            'SELECT id, nome, sexo, cpf, estado_civil,
+                telefone, usuario_email,
+                cep, logradouro, numero_endereco, complemento_endereco,
+                bairro, cidade, UF,
+                data_nascimento, data_matricula, turma, observacoes, status, foto, docente
              FROM tb_cad_alunos WHERE id = ?'
         );
         if (!$stmt) {
             http_response_code(500);
-            echo json_encode(['ok' => false, 'msg' => 'Erro na consulta: ' . $db->error]);
+            echo json_encode(['ok' => false, 'msg' => 'Erro interno.']);
             return;
         }
         $stmt->bind_param('i', $id);
@@ -183,14 +245,43 @@ function handleGet($db) {
 
     $sql .= ' ORDER BY nome ASC';
 
-    $stmt = $db->prepare($sql);
-    if (!$stmt) {
+    // ── Paginação ──
+    $page  = max(1, (int)($_GET['page']  ?? 1));
+    $limit = max(1, min(100, (int)($_GET['limit'] ?? 25)));
+    $offset = ($page - 1) * $limit;
+
+    // Conta total (reusa mesma query sem LIMIT)
+    $countSql = 'SELECT COUNT(*) AS total FROM (' . $sql . ') AS sub';
+    $stCount = $db->prepare($sql);
+    if (!$stCount) {
         http_response_code(500);
-        echo json_encode(['ok' => false, 'msg' => 'Erro na consulta: ' . $db->error]);
+        echo json_encode(['ok' => false, 'msg' => 'Erro interno.']);
         return;
     }
     if (!empty($values)) {
-        // call_user_func_array com referências — compatível com PHP 7 e PHP 8
+        $bindArgs = [$types];
+        foreach ($values as &$v) $bindArgs[] = &$v;
+        unset($v);
+        call_user_func_array([$stCount, 'bind_param'], $bindArgs);
+    }
+    $stCount->execute();
+    $stCount->store_result();
+    $totalRows = $stCount->num_rows;
+    $stCount->close();
+
+    // Query paginada
+    $sql .= ' LIMIT ? OFFSET ?';
+    $types  .= 'ii';
+    $values[] = $limit;
+    $values[] = $offset;
+
+    $stmt = $db->prepare($sql);
+    if (!$stmt) {
+        http_response_code(500);
+        echo json_encode(['ok' => false, 'msg' => 'Erro interno.']);
+        return;
+    }
+    if (!empty($values)) {
         $bindArgs = [$types];
         foreach ($values as &$v) $bindArgs[] = &$v;
         unset($v);
@@ -206,7 +297,16 @@ function handleGet($db) {
     }
     $stmt->close();
 
-    echo json_encode(['ok' => true, 'alunos' => $alunos, 'total' => count($alunos)]);
+    $totalPages = max(1, (int)ceil($totalRows / $limit));
+
+    echo json_encode([
+        'ok'          => true,
+        'alunos'      => $alunos,
+        'total'       => $totalRows,
+        'page'        => $page,
+        'limit'       => $limit,
+        'total_pages' => $totalPages
+    ]);
 }
 
 // ══════════════════════════════════════════════════════════
@@ -243,22 +343,22 @@ function handlePost($db) {
 
     $stmt = $db->prepare(
         'INSERT INTO tb_cad_alunos
-            (nome, sexo, cpf, estado_civil, profissao,
+            (nome, sexo, cpf, estado_civil,
              telefone, usuario_email,
              cep, logradouro, numero_endereco, complemento_endereco,
              bairro, cidade, UF,
              data_matricula, turma, observacoes, status, foto, docente)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
     );
     if (!$stmt) {
         http_response_code(500);
-        echo json_encode(['ok' => false, 'msg' => 'Erro ao preparar inserção: ' . $db->error]);
+        echo json_encode(['ok' => false, 'msg' => 'Erro ao preparar inserção.']);
         return;
     }
 
     $stmt->bind_param(
-        'ssssssssssssssssssss',
-        $d['nome'], $d['sexo'], $d['cpf'], $d['estado_civil'], $d['profissao'],
+        'sssssssssssssssssss',
+        $d['nome'], $d['sexo'], $d['cpf'], $d['estado_civil'],
         $d['telefone'], $d['email'],
         $d['cep'], $d['logradouro'], $d['numero_endereco'], $d['complemento'],
         $d['bairro'], $d['cidade'], $d['UF'],
@@ -278,10 +378,9 @@ function handlePost($db) {
         http_response_code(201);
         echo json_encode(['ok' => true, 'msg' => 'Aluno cadastrado com sucesso.', 'id' => $newId]);
     } else {
-        $erro = $db->error;
         $stmt->close();
         http_response_code(500);
-        echo json_encode(['ok' => false, 'msg' => 'Erro ao cadastrar aluno: ' . $erro]);
+        echo json_encode(['ok' => false, 'msg' => 'Erro ao cadastrar aluno.']);
     }
 }
 
@@ -362,7 +461,7 @@ function handlePut($db) {
 
     $stmt = $db->prepare(
         'UPDATE tb_cad_alunos SET
-            nome=?, sexo=?, cpf=?, estado_civil=?, profissao=?,
+                nome=?, sexo=?, cpf=?, estado_civil=?,
             telefone=?, usuario_email=?,
             cep=?, logradouro=?, numero_endereco=?, complemento_endereco=?,
             bairro=?, cidade=?, UF=?,
@@ -371,13 +470,13 @@ function handlePut($db) {
     );
     if (!$stmt) {
         http_response_code(500);
-        echo json_encode(['ok' => false, 'msg' => 'Erro ao preparar atualização: ' . $db->error]);
+        echo json_encode(['ok' => false, 'msg' => 'Erro ao preparar atualização.']);
         return;
     }
 
     $stmt->bind_param(
-        'ssssssssssssssssssssi',
-        $d['nome'], $d['sexo'], $d['cpf'], $d['estado_civil'], $d['profissao'],
+        'sssssssssssssssssssi',
+        $d['nome'], $d['sexo'], $d['cpf'], $d['estado_civil'],
         $d['telefone'], $d['email'],
         $d['cep'], $d['logradouro'], $d['numero_endereco'], $d['complemento'],
         $d['bairro'], $d['cidade'], $d['UF'],
@@ -394,14 +493,14 @@ function handlePut($db) {
             $s2 = $db->prepare('UPDATE tb_cad_alunos SET data_nascimento=? WHERE id=?');
             if ($s2) { $s2->bind_param('si', $d['data_nascimento'], $id); $s2->execute(); $s2->close(); }
         } else {
-            $db->query("UPDATE tb_cad_alunos SET data_nascimento=NULL WHERE id=$id");
+            $s3 = $db->prepare('UPDATE tb_cad_alunos SET data_nascimento = NULL WHERE id = ?');
+            if ($s3) { $s3->bind_param('i', $id); $s3->execute(); $s3->close(); }
         }
         echo json_encode(['ok' => true, 'msg' => 'Aluno atualizado com sucesso.']);
     } else {
-        $erro = $db->error;
         $stmt->close();
         http_response_code(500);
-        echo json_encode(['ok' => false, 'msg' => 'Erro ao atualizar aluno: ' . $erro]);
+        echo json_encode(['ok' => false, 'msg' => 'Erro ao atualizar aluno.']);
     }
 }
 
@@ -419,7 +518,7 @@ function handleDelete($db) {
     $stmt = $db->prepare('DELETE FROM tb_cad_alunos WHERE id = ?');
     if (!$stmt) {
         http_response_code(500);
-        echo json_encode(['ok' => false, 'msg' => 'Erro ao preparar exclusão: ' . $db->error]);
+        echo json_encode(['ok' => false, 'msg' => 'Erro ao preparar exclusão.']);
         return;
     }
     $stmt->bind_param('i', $id);
@@ -499,7 +598,6 @@ function sanitize(array $d): array {
         'sexo'            => in_array($d['sexo'] ?? '', ['M','F']) ? $d['sexo'] : 'M',
         'cpf'             => $cpf,
         'estado_civil'    => mb_substr(trim($d['estado_civil'] ?? ''), 0, 20),
-        'profissao'       => mb_substr(trim($d['profissao'] ?? ''), 0, 50),
         'telefone'        => $tel,
         'email'           => mb_substr(trim($d['email'] ?? ''), 0, 50),
         'cep'             => $cep,
